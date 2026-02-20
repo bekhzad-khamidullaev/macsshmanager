@@ -1,0 +1,11 @@
+{
+  "": {
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/master.swiftdeps"
+  },
+  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/checkouts/SwiftTerm/Sources/SwiftTermFuzz/main.swift": {
+    "dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main.d",
+    "object": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main.swift.o",
+    "swiftmodule": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/SwiftTermFuzz.build/main.swiftdeps"
+  }
+}

@@ -1,0 +1,29 @@
+{
+  "": {
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/master.swiftdeps"
+  },
+  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/checkouts/SwiftTerm/Sources/Termcast/AsciicastFormat.swift": {
+    "dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/AsciicastFormat.d",
+    "object": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/AsciicastFormat.swift.o",
+    "swiftmodule": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/AsciicastFormat~partial.swiftmodule",
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/AsciicastFormat.swiftdeps"
+  },
+  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/checkouts/SwiftTerm/Sources/Termcast/TermcastPlayer.swift": {
+    "dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastPlayer.d",
+    "object": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastPlayer.swift.o",
+    "swiftmodule": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastPlayer~partial.swiftmodule",
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastPlayer.swiftdeps"
+  },
+  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/checkouts/SwiftTerm/Sources/Termcast/TermcastRecorder.swift": {
+    "dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastRecorder.d",
+    "object": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastRecorder.swift.o",
+    "swiftmodule": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastRecorder~partial.swiftmodule",
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/TermcastRecorder.swiftdeps"
+  },
+  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/checkouts/SwiftTerm/Sources/Termcast/main.swift": {
+    "dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/main.d",
+    "object": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/main.swift.o",
+    "swiftmodule": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/main~partial.swiftmodule",
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/Termcast.build/main.swiftdeps"
+  }
+}

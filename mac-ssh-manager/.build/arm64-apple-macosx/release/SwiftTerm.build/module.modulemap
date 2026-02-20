@@ -1,0 +1,4 @@
+module SwiftTerm {
+    header "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/release/SwiftTerm.build/SwiftTerm-Swift.h"
+    requires objc
+}
