@@ -11,8 +11,8 @@
     }
   },
   "generatedSourceTargetSet" : [
-    "GenerateDoccReference",
-    "GenerateManual"
+    "GenerateManual",
+    "GenerateDoccReference"
   ],
   "pluginDescriptions" : [
     {
