@@ -123,13 +123,34 @@ private enum RemoteTransferCommand {
     }
 
     static func uploadFile(host: HostEntry, localPath: String, remoteDirectory: String) -> TransferResult<Void> {
+        var isDirectory = ObjCBool(false)
+        let exists = FileManager.default.fileExists(atPath: localPath, isDirectory: &isDirectory)
+        guard exists else {
+            return .failure("Local path does not exist")
+        }
+
         switch host.fileTransfer.protocolMode {
         case .sftp:
-            return uploadWithSFTP(host: host, localPath: localPath, remoteDirectory: remoteDirectory)
+            return uploadWithSFTP(
+                host: host,
+                localPath: localPath,
+                remoteDirectory: remoteDirectory,
+                isDirectory: isDirectory.boolValue
+            )
         case .scp:
-            return uploadWithSCP(host: host, localPath: localPath, remoteDirectory: remoteDirectory)
+            return uploadWithSCP(
+                host: host,
+                localPath: localPath,
+                remoteDirectory: remoteDirectory,
+                isDirectory: isDirectory.boolValue
+            )
         case .ftp:
-            return uploadWithFTP(host: host, localPath: localPath, remoteDirectory: remoteDirectory)
+            return uploadWithFTP(
+                host: host,
+                localPath: localPath,
+                remoteDirectory: remoteDirectory,
+                isDirectory: isDirectory.boolValue
+            )
         }
     }
 
@@ -220,11 +241,17 @@ private enum RemoteTransferCommand {
         }
     }
 
-    private static func uploadWithSFTP(host: HostEntry, localPath: String, remoteDirectory: String) -> TransferResult<Void> {
+    private static func uploadWithSFTP(
+        host: HostEntry,
+        localPath: String,
+        remoteDirectory: String,
+        isDirectory: Bool
+    ) -> TransferResult<Void> {
         let target = sshTarget(host)
         guard let target else { return .failure("Host or username is empty") }
 
-        let commands = "cd \(sftpQuote(remoteDirectory))\nput \(sftpQuote(localPath))\n"
+        let putCommand = isDirectory ? "put -r" : "put"
+        let commands = "cd \(sftpQuote(remoteDirectory))\n\(putCommand) \(sftpQuote(localPath))\n"
         let batchURL = temporaryFileURL(prefix: "sftp-upload-")
         do {
             try commands.write(to: batchURL, atomically: true, encoding: .utf8)
@@ -244,12 +271,20 @@ private enum RemoteTransferCommand {
         return .success(())
     }
 
-    private static func uploadWithSCP(host: HostEntry, localPath: String, remoteDirectory: String) -> TransferResult<Void> {
+    private static func uploadWithSCP(
+        host: HostEntry,
+        localPath: String,
+        remoteDirectory: String,
+        isDirectory: Bool
+    ) -> TransferResult<Void> {
         guard let target = scpTarget(host, remotePath: joinRemotePath(remoteDirectory, (localPath as NSString).lastPathComponent)) else {
             return .failure("Host or username is empty")
         }
 
         var args = ["-P", String(host.port)]
+        if isDirectory {
+            args.append("-r")
+        }
         args.append(contentsOf: sshOptionArgs(host: host))
         args.append(contentsOf: [localPath, target])
 
@@ -260,7 +295,16 @@ private enum RemoteTransferCommand {
         return .success(())
     }
 
-    private static func uploadWithFTP(host: HostEntry, localPath: String, remoteDirectory: String) -> TransferResult<Void> {
+    private static func uploadWithFTP(
+        host: HostEntry,
+        localPath: String,
+        remoteDirectory: String,
+        isDirectory: Bool
+    ) -> TransferResult<Void> {
+        if isDirectory {
+            return .failure("FTP folder upload is not supported. Use SFTP/SCP or upload files.")
+        }
+
         let credentials = ftpCredentials(for: host)
         switch credentials {
         case .failure(let error):
@@ -929,7 +973,7 @@ final class RemoteFileService: ObservableObject {
 
         let panel = NSOpenPanel()
         panel.canChooseFiles = true
-        panel.canChooseDirectories = false
+        panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
         panel.prompt = "Upload"
 
@@ -1055,38 +1099,25 @@ struct FileTransferPane: View {
                     service.refresh()
                 }
                 .keyboardShortcut("r", modifiers: [.command])
+                .buttonStyle(RadixSecondaryButtonStyle())
             }
 
             if hosts.isEmpty {
                 Text("No hosts available. Add a host first.")
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(RadixTheme.textMuted)
                     .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .background(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .fill(Color(nsColor: .controlBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 10, style: .continuous)
-                            .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-                    )
+                    .radixCard(elevated: false, radius: 12)
             } else {
                 hostControls
                 pathControls
                 contentSplit
                 Text(service.statusMessage)
                     .font(.footnote)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(RadixTheme.textMuted)
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-        )
+        .radixCard(elevated: false, radius: 12)
         .onAppear {
             if selectedHostID == nil {
                 selectedHostID = hosts.first?.id
@@ -1114,7 +1145,7 @@ struct FileTransferPane: View {
             if let selectedHost {
                 Text("Protocol: \(selectedHost.fileTransfer.protocolMode.title)")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(RadixTheme.textMuted)
             }
 
             Spacer()
@@ -1140,6 +1171,7 @@ struct FileTransferPane: View {
             } label: {
                 Image(systemName: "arrow.up.to.line")
             }
+            .buttonStyle(RadixIconButtonStyle())
 
             TextField("Remote path", text: $service.remotePath)
                 .textFieldStyle(.roundedBorder)
@@ -1150,15 +1182,18 @@ struct FileTransferPane: View {
             Button("Open") {
                 service.openSelection()
             }
+            .buttonStyle(RadixSecondaryButtonStyle())
 
             Button("Upload") {
                 service.uploadFromPicker()
             }
+            .buttonStyle(RadixPrimaryButtonStyle())
 
             Button("Download") {
                 service.downloadSelectionToPicker()
             }
             .disabled(service.selectedEntryID == nil)
+            .buttonStyle(RadixSecondaryButtonStyle())
         }
     }
 
@@ -1174,7 +1209,7 @@ struct FileTransferPane: View {
                     Spacer()
                     Text(item.sizeText)
                         .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .foregroundStyle(RadixTheme.textMuted)
                         .frame(width: 70, alignment: .trailing)
                 }
                 .contentShape(Rectangle())
@@ -1188,6 +1223,7 @@ struct FileTransferPane: View {
             VStack(alignment: .leading, spacing: 8) {
                 Text("Preview")
                     .font(.headline)
+                    .foregroundStyle(RadixTheme.textMuted)
 
                 ScrollView {
                     Text(service.previewText.ifEmpty("Select a file to preview"))
@@ -1199,12 +1235,13 @@ struct FileTransferPane: View {
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
+                        .stroke(RadixTheme.border, lineWidth: 1)
                 )
                 .frame(minHeight: 260)
 
                 Text("Transfer Log")
                     .font(.headline)
+                    .foregroundStyle(RadixTheme.textMuted)
 
                 ScrollView {
                     VStack(alignment: .leading, spacing: 4) {
@@ -1219,7 +1256,7 @@ struct FileTransferPane: View {
                 .background(Color(nsColor: .textBackgroundColor))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
+                        .stroke(RadixTheme.border, lineWidth: 1)
                 )
                 .frame(minHeight: 150)
             }
