@@ -42,5 +42,4 @@ If this project helps you, you can support development:
 - Buy Me a Coffee: https://buymeacoffee.com/bekhzadkhamidulloh
 
 ## Contributors
-- Brian Jiang
-- Alan ZHU
+- Bekhzad Khamidulloh
