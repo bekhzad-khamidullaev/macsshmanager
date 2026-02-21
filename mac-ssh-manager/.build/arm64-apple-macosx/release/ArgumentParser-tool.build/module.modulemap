@@ -1,4 +1,0 @@
-module ArgumentParser {
-    header "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/release/ArgumentParser-tool.build/ArgumentParser-Swift.h"
-    requires objc
-}

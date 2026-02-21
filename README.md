@@ -11,8 +11,8 @@ Native macOS SSH manager with saved hosts, multi-session workflow, file transfer
 - Advanced SSH host settings.
 
 ## Project structure
-- `mac-ssh-manager/` - Swift package source for the app.
-- `scripts/build-mac-ssh-manager-app.sh` - build script for `.app` bundle.
+- `macsshmanager/` - Swift package source for the app.
+- `scripts/build-macsshmanager-app.sh` - build script for `.app` bundle.
 - `dist/` - built artifacts (`.app`, `.dmg`).
 
 ## Build
@@ -27,15 +27,15 @@ xcode-select --install
 
 Build app bundle:
 ```bash
-./scripts/build-mac-ssh-manager-app.sh
+./scripts/build-macsshmanager-app.sh
 ```
 
 Output:
-- `dist/MacSSHManager.app`
+- `dist/macsshmanager.app`
 
 ## Release artifact
 Current release includes downloadable DMG:
-- https://github.com/bekhzad-khamidullaev/putty-master/releases/tag/v0.1.1
+- https://github.com/bekhzad-khamidullaev/macsshmanager/releases/tag/v0.1.1
 
 ## Support
 If this project helps you, you can support development:

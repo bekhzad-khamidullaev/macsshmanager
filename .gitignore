@@ -1,0 +1,8 @@
+.DS_Store
+
+dist/*.app
+dist/*.dmg
+
+macsshmanager/.build/
+macsshmanager/build/
+

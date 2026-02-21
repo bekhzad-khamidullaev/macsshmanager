@@ -1,8 +1,0 @@
-version: "Apple Swift version 6.1.2 (swiftlang-6.1.2.1.2 clang-1700.0.13.5)"
-options: "0437dacfb46ab003722da968d3436b283ff9fa074d84979a0b6f3b3f4cf6ab8a"
-build_start_time: [1771686599, 86405000]
-build_end_time: [1771686608, 418439000]
-inputs:
-  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/Sources/MacSSHManager/FileTransferFeature.swift": [1771674924, 462087046]
-  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/Sources/MacSSHManager/RadixTheme.swift": [1771674873, 460607596]
-  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/Sources/MacSSHManager/main.swift": [1771686594, 860992540]
