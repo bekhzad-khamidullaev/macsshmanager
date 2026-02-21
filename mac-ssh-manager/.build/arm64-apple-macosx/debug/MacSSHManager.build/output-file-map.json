@@ -8,6 +8,12 @@
     "swiftmodule": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/FileTransferFeature~partial.swiftmodule",
     "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/FileTransferFeature.swiftdeps"
   },
+  "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/Sources/MacSSHManager/RadixTheme.swift": {
+    "dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/RadixTheme.d",
+    "object": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/RadixTheme.swift.o",
+    "swiftmodule": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/RadixTheme~partial.swiftmodule",
+    "swift-dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/RadixTheme.swiftdeps"
+  },
   "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/Sources/MacSSHManager/main.swift": {
     "dependencies": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/main.d",
     "object": "/Users/sysadmin/Downloads/putty-master/mac-ssh-manager/.build/arm64-apple-macosx/debug/MacSSHManager.build/main.swift.o",

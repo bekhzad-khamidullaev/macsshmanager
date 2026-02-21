@@ -1817,7 +1817,7 @@ struct HostEditorPane: View {
     let canConnect: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 12) {
             Text(mode.title)
                 .font(.title3.weight(.semibold))
 
@@ -1828,6 +1828,7 @@ struct HostEditorPane: View {
             }
 
             basicEditorGrid
+                .controlSize(.small)
             puttySettingsTabs
 
             if let message, !message.isEmpty {
@@ -1839,21 +1840,16 @@ struct HostEditorPane: View {
             HStack(spacing: 10) {
                 Button(mode.saveTitle, action: onSave)
                     .keyboardShortcut("s", modifiers: [.command])
+                    .buttonStyle(RadixPrimaryButtonStyle())
                 if mode.allowsConnect {
                     Button("Connect", action: onConnect)
                         .disabled(!canConnect)
+                        .buttonStyle(RadixSecondaryButtonStyle())
                 }
             }
         }
         .padding(16)
-        .background(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-        )
+        .radixCard(elevated: true, radius: 12)
         .onAppear {
             if host.connectionProtocol == .ssh, host.authMethod == .password, host.terminalLaunchMode == .systemTerminal {
                 host.terminalLaunchMode = .embedded
@@ -1880,7 +1876,7 @@ struct HostEditorPane: View {
     }
 
     private var basicEditorGrid: some View {
-        Grid(alignment: .leading, horizontalSpacing: 12, verticalSpacing: 10) {
+        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
             if mode == .host {
                 GridRow {
                     label("Name")
@@ -1994,43 +1990,67 @@ struct HostEditorPane: View {
     private var puttySettingsTabs: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("PuTTY Compatibility Settings")
-                .font(.headline)
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(RadixTheme.textMuted)
 
-            TabView(selection: $selectedSettingsSection) {
-                terminalTab
-                    .tag(HostSettingsSection.terminal)
-                    .tabItem { Text("Terminal") }
-
-                connectionTab
-                    .tag(HostSettingsSection.connection)
-                    .tabItem { Text("Connection") }
-
-                authTab
-                    .tag(HostSettingsSection.auth)
-                    .tabItem { Text("Auth") }
-
-                sshTab
-                    .tag(HostSettingsSection.ssh)
-                    .tabItem { Text("SSH") }
-
-                tunnelsTab
-                    .tag(HostSettingsSection.tunnels)
-                    .tabItem { Text("Tunnels") }
-
-                proxyTab
-                    .tag(HostSettingsSection.proxy)
-                    .tabItem { Text("Proxy") }
-
-                environmentTab
-                    .tag(HostSettingsSection.environment)
-                    .tabItem { Text("Environment") }
-
-                loggingTab
-                    .tag(HostSettingsSection.logging)
-                    .tabItem { Text("Logging") }
+            ScrollView(.horizontal, showsIndicators: false) {
+                HStack(spacing: 6) {
+                    ForEach(HostSettingsSection.allCases) { section in
+                        settingsTabButton(section)
+                    }
+                }
+                .padding(.horizontal, 1)
+                .padding(.vertical, 1)
             }
-            .frame(minHeight: 360)
+            .frame(height: 34)
+
+            selectedSettingsContent
+                .frame(minHeight: 360)
+                .radixCard(elevated: false, radius: 10)
+            .controlSize(.small)
         }
+    }
+
+    @ViewBuilder
+    private var selectedSettingsContent: some View {
+        switch selectedSettingsSection {
+        case .terminal:
+            terminalTab
+        case .connection:
+            connectionTab
+        case .auth:
+            authTab
+        case .ssh:
+            sshTab
+        case .tunnels:
+            tunnelsTab
+        case .proxy:
+            proxyTab
+        case .environment:
+            environmentTab
+        case .logging:
+            loggingTab
+        }
+    }
+
+    private func settingsTabButton(_ section: HostSettingsSection) -> some View {
+        let isSelected = selectedSettingsSection == section
+        return Button(section.rawValue) {
+            selectedSettingsSection = section
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+        .foregroundStyle(isSelected ? RadixTheme.accent : RadixTheme.textMuted)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            Capsule(style: .continuous)
+                .fill(isSelected ? RadixTheme.accentSoft : RadixTheme.surfaceElevated)
+        )
+        .overlay(
+            Capsule(style: .continuous)
+                .stroke(isSelected ? RadixTheme.accent.opacity(0.5) : RadixTheme.border, lineWidth: 1)
+        )
     }
 
     private var terminalTab: some View {
@@ -2363,15 +2383,17 @@ struct HostEditorPane: View {
 
     private func label(_ title: String) -> some View {
         Text(title)
-            .foregroundStyle(.secondary)
-            .frame(width: 120, alignment: .leading)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(RadixTheme.textMuted)
+            .frame(width: 108, alignment: .leading)
     }
 
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
         HStack(alignment: .center, spacing: 12) {
             Text(title)
-                .foregroundStyle(.secondary)
-                .frame(width: 170, alignment: .leading)
+                .font(.caption.weight(.medium))
+                .foregroundStyle(RadixTheme.textMuted)
+                .frame(width: 150, alignment: .leading)
             content()
         }
     }
@@ -2386,11 +2408,11 @@ struct HostEditorPane: View {
                 .frame(minHeight: 90)
                 .overlay(
                     RoundedRectangle(cornerRadius: 6, style: .continuous)
-                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
+                        .stroke(RadixTheme.border, lineWidth: 1)
                 )
             Text(hint)
                 .font(.caption)
-                .foregroundStyle(.secondary)
+                .foregroundStyle(RadixTheme.textMuted)
         }
     }
 }
@@ -2405,7 +2427,7 @@ struct SessionTerminalView: View {
             .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
+                .stroke(RadixTheme.border, lineWidth: 1)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
     }
@@ -2441,11 +2463,11 @@ struct SessionTileView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(RadixTheme.surfaceSubtle)
             .overlay(
                 Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(height: 0.8),
+                    .fill(RadixTheme.border)
+                    .frame(height: 1),
                 alignment: .bottom
             )
 
@@ -2455,7 +2477,7 @@ struct SessionTileView: View {
         }
         .overlay(
             RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
+                .stroke(RadixTheme.border, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
@@ -2526,11 +2548,7 @@ struct SessionsPane: View {
                 }
             }
         }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(
-            RoundedRectangle(cornerRadius: 10, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-        )
+        .radixCard(elevated: false, radius: 12)
     }
 
     private var tabHeaderRow: some View {
@@ -2547,11 +2565,11 @@ struct SessionsPane: View {
             Spacer()
         }
         .frame(height: 42)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(RadixTheme.surfaceSubtle)
         .overlay(
             Rectangle()
-                .fill(Color(nsColor: .separatorColor))
-                .frame(height: 0.8),
+                .fill(RadixTheme.border)
+                .frame(height: 1),
             alignment: .bottom
         )
     }
@@ -2562,8 +2580,8 @@ struct SessionsPane: View {
 
     private func tabHeader(_ tab: SessionTab) -> some View {
         let selected = sessions.selectedID == tab.id
-        let activeFill = Color(nsColor: .controlBackgroundColor)
-        let inactiveFill = Color(nsColor: .underPageBackgroundColor).opacity(0.45)
+        let activeFill = RadixTheme.surfaceElevated
+        let inactiveFill = RadixTheme.surfaceSubtle.opacity(0.82)
 
         return HStack(spacing: 8) {
             Button(tab.title) {
@@ -2596,7 +2614,7 @@ struct SessionsPane: View {
         )
         .overlay(
             BrowserTabShape(cornerRadius: 7)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
+                .stroke(RadixTheme.border, lineWidth: 1)
         )
         .overlay(alignment: .bottom) {
             if selected {
@@ -2686,14 +2704,7 @@ struct ShortcutRowEditor: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color(nsColor: .controlBackgroundColor))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-        )
+        .radixCard(elevated: false, radius: 10)
     }
 
     private func binding(for action: ShortcutAction) -> Binding<ShortcutBinding> {
@@ -2743,14 +2754,17 @@ struct ShortcutManagerSheet: View {
                 Button("Reset Defaults") {
                     store.resetToDefaults()
                 }
+                .buttonStyle(RadixSecondaryButtonStyle())
                 Spacer()
                 Button("Close") {
                     isPresented = false
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(RadixPrimaryButtonStyle())
             }
         }
         .padding(16)
+        .background(RadixTheme.surface)
         .frame(minWidth: 920, minHeight: 620)
     }
 }
@@ -2801,20 +2815,25 @@ struct ContentView: View {
     }
 
     var body: some View {
-        VStack(spacing: 0) {
-            workspaceTopBar
-            if isSidebarHidden {
-                workspacePane
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else {
-                HSplitView {
-                    connectionsPane
-                        .frame(minWidth: 250, idealWidth: 280, maxWidth: 360)
+        ZStack {
+            RadixPageBackground()
+
+            VStack(spacing: 0) {
+                workspaceTopBar
+                if isSidebarHidden {
                     workspacePane
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                } else {
+                    HSplitView {
+                        connectionsPane
+                            .frame(minWidth: 250, idealWidth: 280, maxWidth: 360)
+                        workspacePane
+                            .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
             }
         }
+        .tint(RadixTheme.accent)
         .frame(minWidth: 1380, minHeight: 860)
         .onAppear {
             if store.hosts.isEmpty, store.groups.isEmpty {
@@ -2861,33 +2880,32 @@ struct ContentView: View {
                 Image(systemName: isSidebarHidden ? "sidebar.left" : "sidebar.left")
                     .imageScale(.large)
             }
-            .buttonStyle(.borderless)
+            .buttonStyle(RadixIconButtonStyle())
             .help(isSidebarHidden ? "Show Menu" : "Hide Menu")
 
             Text("Workspace")
                 .font(.caption.weight(.semibold))
-                .foregroundStyle(.secondary)
+                .foregroundStyle(RadixTheme.textMuted)
 
-            Picker("", selection: $selectedPage) {
-                Text("TTY").tag(AppPage.sessions)
-                Text("Files").tag(AppPage.files)
+            HStack(spacing: 6) {
+                pageChip("TTY", page: .sessions)
+                pageChip("Files", page: .files)
                 if selectedPage == .hosts {
-                    Text("Settings").tag(AppPage.hosts)
+                    pageChip("Settings", page: .hosts)
                 }
             }
-            .pickerStyle(.segmented)
-            .frame(width: 150)
+            .padding(3)
+            .radixCard(elevated: false, radius: 9)
 
             if selectedPage == .sessions {
                 Divider().frame(height: 16)
-                
-                Picker("", selection: $sessions.displayMode) {
-                    ForEach(SessionDisplayMode.allCases) { mode in
-                        Text(mode.rawValue).tag(mode)
-                    }
+
+                HStack(spacing: 6) {
+                    displayModeChip("TTY", mode: .tty)
+                    displayModeChip("Grid", mode: .grid)
                 }
-                .pickerStyle(.segmented)
-                .frame(width: 100)
+                .padding(3)
+                .radixCard(elevated: false, radius: 9)
 
                 if sessions.displayMode == .grid {
                     Stepper("Cols: \(sessions.gridColumns)", value: $sessions.gridColumns, in: 1...6)
@@ -2913,6 +2931,7 @@ struct ContentView: View {
                 }
                 .disabled(sessions.tabs.isEmpty)
                 .controlSize(.small)
+                .buttonStyle(RadixSecondaryButtonStyle())
             }
 
             Spacer(minLength: 8)
@@ -2920,18 +2939,58 @@ struct ContentView: View {
             if let host = selectedHostForActions {
                 Text(host.displayName)
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(RadixTheme.textMuted)
                     .lineLimit(1)
             }
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(Color(nsColor: .windowBackgroundColor))
+        .background(RadixTheme.surfaceSubtle)
         .overlay(
             Rectangle()
-                .fill(Color(nsColor: .separatorColor))
-                .frame(height: 0.8),
+                .fill(RadixTheme.border)
+                .frame(height: 1),
             alignment: .bottom
+        )
+    }
+
+    private func pageChip(_ title: String, page: AppPage) -> some View {
+        let isSelected = selectedPage == page
+        return Button(title) {
+            selectedPage = page
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+        .foregroundStyle(isSelected ? RadixTheme.accent : RadixTheme.textMuted)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(isSelected ? RadixTheme.accentSoft : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(isSelected ? RadixTheme.accent.opacity(0.45) : Color.clear, lineWidth: 1)
+        )
+    }
+
+    private func displayModeChip(_ title: String, mode: SessionDisplayMode) -> some View {
+        let isSelected = sessions.displayMode == mode
+        return Button(title) {
+            sessions.displayMode = mode
+        }
+        .buttonStyle(.plain)
+        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
+        .foregroundStyle(isSelected ? RadixTheme.accent : RadixTheme.textMuted)
+        .padding(.horizontal, 10)
+        .padding(.vertical, 6)
+        .background(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(isSelected ? RadixTheme.accentSoft : Color.clear)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(isSelected ? RadixTheme.accent.opacity(0.45) : Color.clear, lineWidth: 1)
         )
     }
 
@@ -2954,13 +3013,16 @@ struct ContentView: View {
                 Button("Cancel") {
                     cancelRenameGroup()
                 }
+                .buttonStyle(RadixSecondaryButtonStyle())
                 Button("Rename") {
                     applyRenameGroup(groupID: groupID)
                 }
                 .keyboardShortcut(.defaultAction)
+                .buttonStyle(RadixPrimaryButtonStyle())
             }
         }
         .padding(16)
+        .background(RadixTheme.surface)
         .frame(width: 420)
     }
 
@@ -2975,11 +3037,11 @@ struct ContentView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(Color(nsColor: .windowBackgroundColor))
+            .background(RadixTheme.surfaceSubtle)
             .overlay(
                 Rectangle()
-                    .fill(Color(nsColor: .separatorColor))
-                    .frame(height: 0.8),
+                    .fill(RadixTheme.border)
+                    .frame(height: 1),
                 alignment: .bottom
             )
 
@@ -2997,11 +3059,7 @@ struct ContentView: View {
             .environment(\.defaultMinListRowHeight, 20)
             .background(HorizontalScrollLock())
         }
-        .background(Color(nsColor: .controlBackgroundColor))
-        .overlay(
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
-                .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-        )
+        .radixCard(elevated: false, radius: 10)
         .padding(6)
     }
 
@@ -3040,7 +3098,7 @@ struct ContentView: View {
             if hostEditorMode == .group {
                 Text("Scope: group and subgroups")
                     .font(.caption)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(RadixTheme.textMuted)
             }
         }
     }
@@ -3067,38 +3125,13 @@ struct ContentView: View {
 
     private var emptyHostsSelectionView: some View {
         Text("Use right-click on a host or group and choose Open Settings")
-            .foregroundStyle(.secondary)
+            .foregroundStyle(RadixTheme.textMuted)
             .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .background(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .fill(Color(nsColor: .controlBackgroundColor))
-            )
-            .overlay(
-                RoundedRectangle(cornerRadius: 10, style: .continuous)
-                    .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-            )
+            .radixCard(elevated: false, radius: 12)
     }
 
     private var sessionsPage: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            if !sessionStatusMessage.isEmpty {
-                Text(sessionStatusMessage)
-                    .font(.caption)
-                    .foregroundStyle(sessionStatusIsError ? Color.red : Color.secondary)
-                    .padding(.horizontal, 10)
-                    .padding(.vertical, 5)
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .fill(Color(nsColor: .windowBackgroundColor))
-                    )
-                    .overlay(
-                        RoundedRectangle(cornerRadius: 8, style: .continuous)
-                            .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-                    )
-            }
-            SessionsPane(sessions: sessions)
-        }
+        SessionsPane(sessions: sessions)
     }
 
     private var filesPage: some View {
@@ -3127,16 +3160,8 @@ struct ContentView: View {
             Image(systemName: systemName)
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: 20, height: 18)
-                .background(
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .fill(Color(nsColor: .controlBackgroundColor))
-                )
-                .overlay(
-                    RoundedRectangle(cornerRadius: 3, style: .continuous)
-                        .stroke(Color(nsColor: .separatorColor), lineWidth: 0.8)
-                )
         }
-        .buttonStyle(.plain)
+        .buttonStyle(RadixIconButtonStyle())
     }
 
     @ViewBuilder
