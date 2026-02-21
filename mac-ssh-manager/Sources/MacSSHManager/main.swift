@@ -4104,6 +4104,12 @@ struct MacSSHManagerCommands: Commands {
     @ObservedObject var shortcutStore: ShortcutStore
 
     var body: some Commands {
+        CommandGroup(replacing: .appInfo) {
+            Button("About Mac SSH Manager") {
+                AppAboutPanel.show()
+            }
+        }
+
         CommandMenu("File") {
             menuButton("New Host", shortcut: .newHost)
             menuButton("New Group", shortcut: .newGroup)
@@ -4159,6 +4165,35 @@ struct MacSSHManagerCommands: Commands {
             sendSystemMenuAction(action.systemAction)
         }
         .keyboardShortcut(shortcut.keyEquivalent, modifiers: shortcut.modifiers)
+    }
+}
+
+private enum AppAboutPanel {
+    @MainActor
+    static func show() {
+        let info = Bundle.main.infoDictionary ?? [:]
+        let appName = info["CFBundleName"] as? String ?? "Mac SSH Manager"
+        let shortVersion = info["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        let build = info["CFBundleVersion"] as? String ?? "1"
+        let copyright =
+            info["NSHumanReadableCopyright"] as? String ??
+            "Copyright (c) 2026 Mac SSH Manager contributors"
+
+        let credits = NSAttributedString(
+            string: """
+            Native macOS SSH manager with PuTTY-compatible host settings.
+            Includes multi-tab sessions, saved hosts, file transfer, and Keychain support.
+            \(copyright)
+            """
+        )
+
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        NSApplication.shared.orderFrontStandardAboutPanel(options: [
+            .applicationName: appName,
+            .applicationVersion: shortVersion,
+            .version: "Build \(build)",
+            .credits: credits
+        ])
     }
 }
 
