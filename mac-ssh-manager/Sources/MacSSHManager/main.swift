@@ -1989,7 +1989,7 @@ struct HostEditorPane: View {
 
     private var puttySettingsTabs: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("PuTTY Compatibility Settings")
+            Text("Advanced Host Settings")
                 .font(.subheadline.weight(.semibold))
                 .foregroundStyle(RadixTheme.textMuted)
 
@@ -4181,7 +4181,7 @@ private enum AppAboutPanel {
 
         let credits = NSAttributedString(
             string: """
-            Native macOS SSH manager with PuTTY-compatible host settings.
+            Native macOS SSH manager with advanced host settings.
             Includes multi-tab sessions, saved hosts, file transfer, and Keychain support.
             \(copyright)
             """

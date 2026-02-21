@@ -1,5 +1,5 @@
 # Mac SSH Manager
-Native macOS SSH manager with saved hosts, multi-session workflow, file transfer support, and PuTTY-compatible host settings.
+Native macOS SSH manager with saved hosts, multi-session workflow, file transfer support, and advanced host settings.
 
 [![Buy Me a Coffee](https://img.shields.io/badge/Buy%20Me%20a%20Coffee-Support-FFDD00?logo=buymeacoffee&logoColor=000000)](https://buymeacoffee.com/bekhzadkhamidulloh)
 
@@ -8,7 +8,7 @@ Native macOS SSH manager with saved hosts, multi-session workflow, file transfer
 - Saved hosts with SSH key or password auth.
 - Password storage in macOS Keychain.
 - File transfer panel (SFTP/SCP/FTP modes).
-- PuTTY-style advanced host settings.
+- Advanced SSH host settings.
 
 ## Project structure
 - `mac-ssh-manager/` - Swift package source for the app.
