@@ -433,16 +433,20 @@ private enum RemoteTransferCommand {
         process.standardOutput = stdoutPipe
         process.standardError = stderrPipe
 
+        let stdoutReader = ProcessPipeReader(handle: stdoutPipe.fileHandleForReading)
+        let stderrReader = ProcessPipeReader(handle: stderrPipe.fileHandleForReading)
+
         do {
             try process.run()
         } catch {
             return RemoteCommandResult(exitCode: -1, stdout: "", stderr: error.localizedDescription)
         }
 
+        stdoutReader.begin()
+        stderrReader.begin()
         process.waitUntilExit()
-
-        let stdoutData = stdoutPipe.fileHandleForReading.readDataToEndOfFile()
-        let stderrData = stderrPipe.fileHandleForReading.readDataToEndOfFile()
+        let stdoutData = stdoutReader.finish()
+        let stderrData = stderrReader.finish()
 
         return RemoteCommandResult(
             exitCode: process.terminationStatus,
@@ -828,12 +832,36 @@ final class RemoteFileService: ObservableObject {
 
     private var timer: Timer?
     private let worker = DispatchQueue(label: "macssh.files.worker", qos: .userInitiated)
+    private var listRequestID: UInt64 = 0
+    private var previewRequestID: UInt64 = 0
 
     func activate(host: HostEntry?) {
+        if activeHost == host {
+            return
+        }
+
+        if let host,
+           let previousHost = activeHost,
+           previousHost.id == host.id {
+            let previousRoot = normalizedRemoteRoot(for: previousHost)
+            activeHost = host
+            livePreviewEnabled = host.fileTransfer.livePreview
+
+            if remotePath == previousRoot {
+                remotePath = normalizedRemoteRoot(for: host)
+            }
+
+            addLog("Updated host settings for \(host.displayName)")
+            restartTimer()
+            refresh()
+            return
+        }
+
         activeHost = host
         entries = []
         selectedEntryID = nil
         previewText = ""
+        cancelPendingRequests()
 
         guard let host else {
             statusMessage = "Select a host"
@@ -842,14 +870,18 @@ final class RemoteFileService: ObservableObject {
             return
         }
 
-        let root = host.fileTransfer.remoteRootPath.trimmed
-        remotePath = root.isEmpty ? "." : root
+        remotePath = normalizedRemoteRoot(for: host)
         autoRefreshEnabled = true
         livePreviewEnabled = host.fileTransfer.livePreview
         addLog("Selected host \(host.displayName), protocol \(host.fileTransfer.protocolMode.title)")
 
         restartTimer()
         refresh()
+    }
+
+    private func normalizedRemoteRoot(for host: HostEntry) -> String {
+        let root = host.fileTransfer.remoteRootPath.trimmed
+        return root.isEmpty ? "." : root
     }
 
     func setAutoRefresh(_ enabled: Bool) {
@@ -881,10 +913,16 @@ final class RemoteFileService: ObservableObject {
 
         let selectedID = selectedEntryID
         let shouldRefreshPreview = livePreviewEnabled
+        let requestID = nextListRequestID()
 
         worker.async { [host, path] in
             let result = RemoteTransferCommand.listDirectory(host: host, path: path)
             DispatchQueue.main.async {
+                guard self.listRequestID == requestID,
+                      self.activeHost?.id == host.id,
+                      self.remotePath == path else {
+                    return
+                }
                 self.isBusy = false
                 switch result {
                 case .failure(let error):
@@ -952,9 +990,15 @@ final class RemoteFileService: ObservableObject {
         guard let host = activeHost, let selected = selectedEntry, !selected.isDirectory else { return }
 
         let remotePath = selected.fullPath
+        let requestID = nextPreviewRequestID()
         worker.async { [host, remotePath] in
             let result = RemoteTransferCommand.previewFile(host: host, remotePath: remotePath)
             DispatchQueue.main.async {
+                guard self.previewRequestID == requestID,
+                      self.activeHost?.id == host.id,
+                      self.selectedEntryID == remotePath else {
+                    return
+                }
                 switch result {
                 case .failure(let error):
                     self.previewText = "Preview error: \(error.message)"
@@ -1070,6 +1114,22 @@ final class RemoteFileService: ObservableObject {
         }
     }
 
+    private func nextListRequestID() -> UInt64 {
+        listRequestID &+= 1
+        return listRequestID
+    }
+
+    private func nextPreviewRequestID() -> UInt64 {
+        previewRequestID &+= 1
+        return previewRequestID
+    }
+
+    private func cancelPendingRequests() {
+        listRequestID &+= 1
+        previewRequestID &+= 1
+        isBusy = false
+    }
+
     private static let timeFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.dateFormat = "HH:mm:ss"
@@ -1099,14 +1159,16 @@ struct FileTransferPane: View {
                     service.refresh()
                 }
                 .keyboardShortcut("r", modifiers: [.command])
-                .buttonStyle(RadixSecondaryButtonStyle())
+                .buttonStyle(.bordered)
             }
 
             if hosts.isEmpty {
-                Text("No hosts available. Add a host first.")
-                    .foregroundStyle(RadixTheme.textMuted)
-                    .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                    .radixCard(elevated: false, radius: 12)
+                GroupBox {
+                    Text("No hosts available. Add a host first.")
+                        .foregroundStyle(RadixTheme.textMuted)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                        .padding(.vertical, 24)
+                }
             } else {
                 hostControls
                 pathControls
@@ -1117,12 +1179,13 @@ struct FileTransferPane: View {
             }
         }
         .padding(16)
-        .radixCard(elevated: false, radius: 12)
+        .background(RadixTheme.surface)
         .onAppear {
             if selectedHostID == nil {
                 selectedHostID = hosts.first?.id
+            } else {
+                service.activate(host: selectedHost)
             }
-            service.activate(host: selectedHost)
         }
         .onChange(of: selectedHostID) { _ in
             service.activate(host: selectedHost)
@@ -1171,7 +1234,7 @@ struct FileTransferPane: View {
             } label: {
                 Image(systemName: "arrow.up.to.line")
             }
-            .buttonStyle(RadixIconButtonStyle())
+            .buttonStyle(.borderless)
 
             TextField("Remote path", text: $service.remotePath)
                 .textFieldStyle(.roundedBorder)
@@ -1182,18 +1245,18 @@ struct FileTransferPane: View {
             Button("Open") {
                 service.openSelection()
             }
-            .buttonStyle(RadixSecondaryButtonStyle())
+            .buttonStyle(.bordered)
 
             Button("Upload") {
                 service.uploadFromPicker()
             }
-            .buttonStyle(RadixPrimaryButtonStyle())
+            .buttonStyle(.borderedProminent)
 
             Button("Download") {
                 service.downloadSelectionToPicker()
             }
             .disabled(service.selectedEntryID == nil)
-            .buttonStyle(RadixSecondaryButtonStyle())
+            .buttonStyle(.bordered)
         }
     }
 
@@ -1220,45 +1283,31 @@ struct FileTransferPane: View {
             }
             .frame(minWidth: 360, minHeight: 420)
 
-            VStack(alignment: .leading, spacing: 8) {
-                Text("Preview")
-                    .font(.headline)
-                    .foregroundStyle(RadixTheme.textMuted)
-
-                ScrollView {
-                    Text(service.previewText.ifEmpty("Select a file to preview"))
-                        .font(.system(.body, design: .monospaced))
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .textSelection(.enabled)
-                        .padding(10)
-                }
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(RadixTheme.border, lineWidth: 1)
-                )
-                .frame(minHeight: 260)
-
-                Text("Transfer Log")
-                    .font(.headline)
-                    .foregroundStyle(RadixTheme.textMuted)
-
-                ScrollView {
-                    VStack(alignment: .leading, spacing: 4) {
-                        ForEach(service.logs.indices, id: \.self) { idx in
-                            Text(service.logs[idx])
-                                .font(.system(.caption, design: .monospaced))
-                                .frame(maxWidth: .infinity, alignment: .leading)
-                        }
+            VStack(alignment: .leading, spacing: 12) {
+                GroupBox("Preview") {
+                    ScrollView {
+                        Text(service.previewText.ifEmpty("Select a file to preview"))
+                            .font(.system(.body, design: .monospaced))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                            .textSelection(.enabled)
+                            .padding(8)
                     }
-                    .padding(10)
+                    .frame(minHeight: 260)
                 }
-                .background(Color(nsColor: .textBackgroundColor))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
-                        .stroke(RadixTheme.border, lineWidth: 1)
-                )
-                .frame(minHeight: 150)
+
+                GroupBox("Transfer Log") {
+                    ScrollView {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(service.logs.indices, id: \.self) { idx in
+                                Text(service.logs[idx])
+                                    .font(.system(.caption, design: .monospaced))
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                            }
+                        }
+                        .padding(8)
+                    }
+                    .frame(minHeight: 150)
+                }
             }
             .frame(minWidth: 420)
         }

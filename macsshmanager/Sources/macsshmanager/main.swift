@@ -732,6 +732,48 @@ struct HostGroup: Identifiable, Codable, Equatable {
     var parentId: UUID?
 }
 
+struct GroupHostTemplate: Codable, Equatable {
+    var connectionProtocol: ConnectionProtocol = .ssh
+    var terminalLaunchMode: TerminalLaunchMode = .embedded
+    var username: String = ""
+    var port: Int = 22
+    var authMethod: AuthMethod = .key
+    var keyPath: String = ""
+    var sshSettings: SSHSettings = SSHSettings()
+    var fileTransfer: FileTransferSettings = FileTransferSettings()
+
+    init() {}
+
+    init(host: HostEntry) {
+        connectionProtocol = host.connectionProtocol
+        terminalLaunchMode = host.terminalLaunchMode
+        username = host.username
+        port = host.port
+        authMethod = host.authMethod
+        keyPath = host.keyPath
+        sshSettings = host.sshSettings
+        fileTransfer = host.fileTransfer
+    }
+
+    func apply(to host: inout HostEntry) {
+        host.connectionProtocol = connectionProtocol
+        host.terminalLaunchMode = terminalLaunchMode
+        host.username = username
+        host.port = port
+        host.authMethod = authMethod
+        host.keyPath = keyPath
+        host.sshSettings = sshSettings
+        host.fileTransfer = fileTransfer
+    }
+
+    func makeHostDraft(groupId: UUID) -> HostEntry {
+        var host = HostEntry(groupId: groupId)
+        apply(to: &host)
+        host.groupId = groupId
+        return host
+    }
+}
+
 struct HostEntry: Identifiable, Codable, Equatable {
     var id: UUID = UUID()
     var name: String = "New Host"
@@ -741,7 +783,7 @@ struct HostEntry: Identifiable, Codable, Equatable {
     var terminalLaunchMode: TerminalLaunchMode = .embedded
     var username: String = ""
     var authMethod: AuthMethod = .key
-    var keyPath: String = "~/.ssh/id_rsa"
+    var keyPath: String = ""
     var groupId: UUID?
     var sshSettings: SSHSettings = SSHSettings()
     var fileTransfer: FileTransferSettings = FileTransferSettings()
@@ -755,7 +797,7 @@ struct HostEntry: Identifiable, Codable, Equatable {
         terminalLaunchMode: TerminalLaunchMode = .embedded,
         username: String = "",
         authMethod: AuthMethod = .key,
-        keyPath: String = "~/.ssh/id_rsa",
+        keyPath: String = "",
         groupId: UUID? = nil,
         sshSettings: SSHSettings = SSHSettings(),
         fileTransfer: FileTransferSettings = FileTransferSettings()
@@ -799,7 +841,7 @@ struct HostEntry: Identifiable, Codable, Equatable {
         terminalLaunchMode = try container.decodeIfPresent(TerminalLaunchMode.self, forKey: .terminalLaunchMode) ?? .embedded
         username = try container.decodeIfPresent(String.self, forKey: .username) ?? ""
         authMethod = try container.decodeIfPresent(AuthMethod.self, forKey: .authMethod) ?? .key
-        keyPath = try container.decodeIfPresent(String.self, forKey: .keyPath) ?? "~/.ssh/id_rsa"
+        keyPath = try container.decodeIfPresent(String.self, forKey: .keyPath) ?? ""
         groupId = try container.decodeIfPresent(UUID.self, forKey: .groupId)
         sshSettings = try container.decodeIfPresent(SSHSettings.self, forKey: .sshSettings) ?? SSHSettings()
         fileTransfer = try container.decodeIfPresent(FileTransferSettings.self, forKey: .fileTransfer) ?? FileTransferSettings()
@@ -842,6 +884,30 @@ struct HostEntry: Identifiable, Codable, Equatable {
 struct PersistedData: Codable {
     var groups: [HostGroup]
     var hosts: [HostEntry]
+    var groupTemplates: [UUID: GroupHostTemplate]
+
+    init(
+        groups: [HostGroup],
+        hosts: [HostEntry],
+        groupTemplates: [UUID: GroupHostTemplate] = [:]
+    ) {
+        self.groups = groups
+        self.hosts = hosts
+        self.groupTemplates = groupTemplates
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case groups
+        case hosts
+        case groupTemplates
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        groups = try container.decodeIfPresent([HostGroup].self, forKey: .groups) ?? []
+        hosts = try container.decodeIfPresent([HostEntry].self, forKey: .hosts) ?? []
+        groupTemplates = try container.decodeIfPresent([UUID: GroupHostTemplate].self, forKey: .groupTemplates) ?? [:]
+    }
 }
 
 struct SidebarNode: Identifiable, Hashable {
@@ -874,9 +940,14 @@ extension String {
 final class HostStore: ObservableObject {
     @Published var groups: [HostGroup] = []
     @Published var hosts: [HostEntry] = []
+    @Published var groupTemplates: [UUID: GroupHostTemplate] = [:]
+    @Published private(set) var dataRevision: Int = 0
 
     private let dataURL: URL
     private let migrationHostsURL: URL
+    private var groupIndex: [UUID: HostGroup] = [:]
+    private var hostIndex: [UUID: HostEntry] = [:]
+    private var sortedAllHostsCache: [HostEntry] = []
 
     init() {
         let fm = FileManager.default
@@ -893,6 +964,8 @@ final class HostStore: ObservableObject {
            let decoded = try? JSONDecoder().decode(PersistedData.self, from: data) {
             groups = decoded.groups
             hosts = decoded.hosts
+            groupTemplates = decoded.groupTemplates
+            rebuildCaches()
             return
         }
 
@@ -900,34 +973,46 @@ final class HostStore: ObservableObject {
            let decodedHosts = try? JSONDecoder().decode([HostEntry].self, from: migrationData) {
             groups = []
             hosts = decodedHosts
+            groupTemplates = [:]
+            rebuildCaches()
             save()
         }
     }
 
     func save() {
-        let payload = PersistedData(groups: groups, hosts: hosts)
+        let payload = PersistedData(groups: groups, hosts: hosts, groupTemplates: groupTemplates)
         if let data = try? JSONEncoder().encode(payload) {
             try? data.write(to: dataURL, options: .atomic)
         }
     }
 
     func currentData() -> PersistedData {
-        PersistedData(groups: groups, hosts: hosts)
+        PersistedData(groups: groups, hosts: hosts, groupTemplates: groupTemplates)
     }
 
-    func replaceAll(groups newGroups: [HostGroup], hosts newHosts: [HostEntry]) {
-        let normalized = Self.normalize(groups: newGroups, hosts: newHosts)
+    func replaceAll(groups newGroups: [HostGroup], hosts newHosts: [HostEntry], groupTemplates newTemplates: [UUID: GroupHostTemplate]) {
+        let normalized = Self.normalize(groups: newGroups, hosts: newHosts, groupTemplates: newTemplates)
         let removedHostIDs = Set(hosts.map(\.id)).subtracting(Set(normalized.hosts.map(\.id)))
         for id in removedHostIDs {
             KeychainHelper.deletePassword(for: id)
         }
+        let removedTemplateIDs = Set(groupTemplates.keys).subtracting(Set(normalized.groupTemplates.keys))
+        for id in removedTemplateIDs {
+            KeychainHelper.deleteGroupTemplatePassword(for: id)
+        }
 
         groups = normalized.groups
         hosts = normalized.hosts
+        groupTemplates = normalized.groupTemplates
+        rebuildCaches()
         save()
     }
 
-    private static func normalize(groups: [HostGroup], hosts: [HostEntry]) -> PersistedData {
+    private static func normalize(
+        groups: [HostGroup],
+        hosts: [HostEntry],
+        groupTemplates: [UUID: GroupHostTemplate]
+    ) -> PersistedData {
         var normalizedGroups: [HostGroup] = []
         var usedGroupIDs: Set<UUID> = []
 
@@ -978,7 +1063,13 @@ final class HostStore: ObservableObject {
             normalizedHosts.append(normalized)
         }
 
-        return PersistedData(groups: normalizedGroups, hosts: normalizedHosts)
+        let normalizedTemplates = groupTemplates.filter { allowedGroupIDs.contains($0.key) }
+
+        return PersistedData(
+            groups: normalizedGroups,
+            hosts: normalizedHosts,
+            groupTemplates: normalizedTemplates
+        )
     }
 
     private static func hasGroupCycle(start: UUID, parentByID: [UUID: UUID?]) -> Bool {
@@ -1009,17 +1100,18 @@ final class HostStore: ObservableObject {
 
     func group(by id: UUID?) -> HostGroup? {
         guard let id else { return nil }
-        return groups.first(where: { $0.id == id })
+        return groupIndex[id]
     }
 
     func host(by id: UUID?) -> HostEntry? {
         guard let id else { return nil }
-        return hosts.first(where: { $0.id == id })
+        return hostIndex[id]
     }
 
     func addGroup(name: String = "New Group", parentId: UUID? = nil) -> HostGroup {
         let group = HostGroup(name: name, parentId: parentId)
         groups.append(group)
+        rebuildCaches()
         save()
         return group
     }
@@ -1027,6 +1119,7 @@ final class HostStore: ObservableObject {
     func updateGroup(id: UUID, name: String) {
         guard let idx = groups.firstIndex(where: { $0.id == id }) else { return }
         groups[idx].name = name
+        rebuildCaches()
         save()
     }
 
@@ -1035,6 +1128,10 @@ final class HostStore: ObservableObject {
         collectDescendants(from: id, into: &toRemove)
 
         groups.removeAll { toRemove.contains($0.id) }
+        for groupID in toRemove {
+            groupTemplates.removeValue(forKey: groupID)
+            KeychainHelper.deleteGroupTemplatePassword(for: groupID)
+        }
 
         for idx in hosts.indices {
             if let gid = hosts[idx].groupId, toRemove.contains(gid) {
@@ -1042,6 +1139,7 @@ final class HostStore: ObservableObject {
             }
         }
 
+        rebuildCaches()
         save()
     }
 
@@ -1055,6 +1153,7 @@ final class HostStore: ObservableObject {
     func addHost(in groupId: UUID?) -> HostEntry {
         let host = HostEntry(groupId: groupId)
         hosts.append(host)
+        rebuildCaches()
         save()
         return host
     }
@@ -1062,6 +1161,7 @@ final class HostStore: ObservableObject {
     func updateHost(_ host: HostEntry) {
         guard let idx = hosts.firstIndex(where: { $0.id == host.id }) else { return }
         hosts[idx] = host
+        rebuildCaches()
         save()
     }
 
@@ -1074,18 +1174,45 @@ final class HostStore: ObservableObject {
             return
         }
         hosts[idx].groupId = groupId
+        rebuildCaches()
         save()
     }
 
     func removeHost(_ id: UUID) {
         hosts.removeAll { $0.id == id }
         KeychainHelper.deletePassword(for: id)
+        rebuildCaches()
         save()
+    }
+
+    func groupTemplate(for id: UUID) -> GroupHostTemplate? {
+        groupTemplates[id]
+    }
+
+    func updateGroupTemplate(_ template: GroupHostTemplate, for groupID: UUID) {
+        guard group(by: groupID) != nil else { return }
+        groupTemplates[groupID] = template
+        rebuildCaches()
+        save()
+    }
+
+    var sortedAllHosts: [HostEntry] {
+        sortedAllHostsCache
+    }
+
+    private func rebuildCaches() {
+        groupIndex = Dictionary(uniqueKeysWithValues: groups.map { ($0.id, $0) })
+        hostIndex = Dictionary(uniqueKeysWithValues: hosts.map { ($0.id, $0) })
+        sortedAllHostsCache = hosts.sorted {
+            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+        }
+        dataRevision &+= 1
     }
 }
 
 enum KeychainHelper {
     private static let service = "macsshmanager"
+    private static let groupTemplatePrefix = "group-template:"
 
     @discardableResult
     static func savePassword(_ password: String, for id: UUID) -> Bool {
@@ -1125,6 +1252,48 @@ enum KeychainHelper {
             kSecClass as String: kSecClassGenericPassword,
             kSecAttrService as String: service,
             kSecAttrAccount as String: id.uuidString
+        ]
+        SecItemDelete(query as CFDictionary)
+    }
+
+    @discardableResult
+    static func saveGroupTemplatePassword(_ password: String, for id: UUID) -> Bool {
+        let account = groupTemplatePrefix + id.uuidString
+        let data = Data(password.utf8)
+
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: account
+        ]
+
+        SecItemDelete(query as CFDictionary)
+
+        var item = query
+        item[kSecValueData as String] = data
+        return SecItemAdd(item as CFDictionary, nil) == errSecSuccess
+    }
+
+    static func loadGroupTemplatePassword(for id: UUID) -> String {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: groupTemplatePrefix + id.uuidString,
+            kSecReturnData as String: true,
+            kSecMatchLimit as String: kSecMatchLimitOne
+        ]
+
+        var out: AnyObject?
+        let status = SecItemCopyMatching(query as CFDictionary, &out)
+        guard status == errSecSuccess, let data = out as? Data else { return "" }
+        return String(decoding: data, as: UTF8.self)
+    }
+
+    static func deleteGroupTemplatePassword(for id: UUID) {
+        let query: [String: Any] = [
+            kSecClass as String: kSecClassGenericPassword,
+            kSecAttrService as String: service,
+            kSecAttrAccount as String: groupTemplatePrefix + id.uuidString
         ]
         SecItemDelete(query as CFDictionary)
     }
@@ -1385,13 +1554,10 @@ final class TerminalRuntime: NSObject, ObservableObject, @preconcurrency LocalPr
 
         if host.authMethod == .key {
             let keyPath = expanded(host.keyPath.trimmed)
-            guard !keyPath.isEmpty else {
-                fail("Private key path is empty")
-                return nil
+            if !keyPath.isEmpty {
+                addOption(&args, "IdentitiesOnly", "yes")
+                args.append(contentsOf: ["-i", keyPath])
             }
-
-            addOption(&args, "IdentitiesOnly", "yes")
-            args.append(contentsOf: ["-i", keyPath])
         }
 
         if settings.noShell && settings.remoteCommand.trimmed.isEmpty {
@@ -1582,15 +1748,20 @@ enum SystemTerminalLauncher {
         process.standardOutput = outPipe
         process.standardError = errPipe
 
+        let outReader = ProcessPipeReader(handle: outPipe.fileHandleForReading)
+        let errReader = ProcessPipeReader(handle: errPipe.fileHandleForReading)
+
         do {
             try process.run()
         } catch {
             return (-1, "", error.localizedDescription)
         }
+        outReader.begin()
+        errReader.begin()
         process.waitUntilExit()
 
-        let outData = outPipe.fileHandleForReading.readDataToEndOfFile()
-        let errData = errPipe.fileHandleForReading.readDataToEndOfFile()
+        let outData = outReader.finish()
+        let errData = errReader.finish()
         return (
             process.terminationStatus,
             String(decoding: outData, as: UTF8.self),
@@ -1615,10 +1786,9 @@ enum SystemTerminalLauncher {
         ]
 
         let keyPath = expanded(host.keyPath.trimmed)
-        guard !keyPath.isEmpty else {
-            return .failure(.message("Private key path is required for System Terminal mode"))
+        if !keyPath.isEmpty {
+            sshArgs.append(contentsOf: ["-o", "IdentitiesOnly=yes", "-i", keyPath])
         }
-        sshArgs.append(contentsOf: ["-o", "IdentitiesOnly=yes", "-i", keyPath])
 
         sshArgs.append("\(user)@\(hostName)")
 
@@ -1827,8 +1997,11 @@ struct HostEditorPane: View {
                     .foregroundStyle(.secondary)
             }
 
-            basicEditorGrid
-                .controlSize(.small)
+            GroupBox("Connection") {
+                basicEditorGrid
+                    .controlSize(.small)
+                    .padding(.top, 6)
+            }
             advancedSettingsTabs
 
             if let message, !message.isEmpty {
@@ -1840,16 +2013,16 @@ struct HostEditorPane: View {
             HStack(spacing: 10) {
                 Button(mode.saveTitle, action: onSave)
                     .keyboardShortcut("s", modifiers: [.command])
-                    .buttonStyle(RadixPrimaryButtonStyle())
+                    .buttonStyle(.borderedProminent)
                 if mode.allowsConnect {
                     Button("Connect", action: onConnect)
                         .disabled(!canConnect)
-                        .buttonStyle(RadixSecondaryButtonStyle())
+                        .buttonStyle(.bordered)
                 }
             }
         }
         .padding(16)
-        .radixCard(elevated: true, radius: 12)
+        .background(RadixTheme.surface)
         .onAppear {
             if host.connectionProtocol == .ssh, host.authMethod == .password, host.terminalLaunchMode == .systemTerminal {
                 host.terminalLaunchMode = .embedded
@@ -1957,10 +2130,16 @@ struct HostEditorPane: View {
                     GridRow {
                         label("Key")
                         HStack(spacing: 8) {
-                            TextField("~/.ssh/id_rsa", text: $host.keyPath)
+                            TextField("Optional: ~/.ssh/id_ed25519", text: $host.keyPath)
                                 .textFieldStyle(.roundedBorder)
                             Button("Browse", action: onBrowseKey)
                         }
+                    }
+                    GridRow {
+                        label("")
+                        Text("Leave empty to use default OpenSSH keys or ssh-agent.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 } else {
                     GridRow {
@@ -1989,25 +2168,34 @@ struct HostEditorPane: View {
 
     private var advancedSettingsTabs: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Advanced Host Settings")
-                .font(.subheadline.weight(.semibold))
-                .foregroundStyle(RadixTheme.textMuted)
+            HStack {
+                Text("Advanced Host Settings")
+                    .font(.subheadline.weight(.semibold))
 
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(spacing: 6) {
+                Spacer()
+
+                Picker("Section", selection: $selectedSettingsSection) {
                     ForEach(HostSettingsSection.allCases) { section in
-                        settingsTabButton(section)
+                        Text(section.rawValue).tag(section)
                     }
                 }
-                .padding(.horizontal, 1)
-                .padding(.vertical, 1)
+                .labelsHidden()
+                .pickerStyle(.menu)
+                .frame(width: 180)
             }
-            .frame(height: 34)
 
             selectedSettingsContent
                 .frame(minHeight: 360)
-                .radixCard(elevated: false, radius: 10)
-            .controlSize(.small)
+                .padding(14)
+                .background(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .fill(RadixTheme.surfaceSubtle)
+                )
+                .overlay(
+                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                        .stroke(RadixTheme.border, lineWidth: 1)
+                )
+                .controlSize(.small)
         }
     }
 
@@ -2031,26 +2219,6 @@ struct HostEditorPane: View {
         case .logging:
             loggingTab
         }
-    }
-
-    private func settingsTabButton(_ section: HostSettingsSection) -> some View {
-        let isSelected = selectedSettingsSection == section
-        return Button(section.rawValue) {
-            selectedSettingsSection = section
-        }
-        .buttonStyle(.plain)
-        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-        .foregroundStyle(isSelected ? RadixTheme.accent : RadixTheme.textMuted)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            Capsule(style: .continuous)
-                .fill(isSelected ? RadixTheme.accentSoft : RadixTheme.surfaceElevated)
-        )
-        .overlay(
-            Capsule(style: .continuous)
-                .stroke(isSelected ? RadixTheme.accent.opacity(0.5) : RadixTheme.border, lineWidth: 1)
-        )
     }
 
     private var terminalTab: some View {
@@ -2406,8 +2574,11 @@ struct HostEditorPane: View {
             TextEditor(text: text)
                 .font(.system(.body, design: .monospaced))
                 .frame(minHeight: 90)
+                .padding(6)
+                .background(Color(nsColor: .textBackgroundColor))
+                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 6, style: .continuous)
+                    RoundedRectangle(cornerRadius: 8, style: .continuous)
                         .stroke(RadixTheme.border, lineWidth: 1)
                 )
             Text(hint)
@@ -2463,7 +2634,7 @@ struct SessionTileView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(RadixTheme.surfaceSubtle)
+            .background(.bar)
             .overlay(
                 Rectangle()
                     .fill(RadixTheme.border)
@@ -2480,31 +2651,6 @@ struct SessionTileView: View {
                 .stroke(RadixTheme.border, lineWidth: 1)
         )
         .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-    }
-}
-
-struct BrowserTabShape: Shape {
-    var cornerRadius: CGFloat = 8
-
-    func path(in rect: CGRect) -> Path {
-        let r = min(cornerRadius, rect.height / 2, rect.width / 2)
-        var path = Path()
-
-        path.move(to: CGPoint(x: rect.minX, y: rect.maxY))
-        path.addLine(to: CGPoint(x: rect.minX, y: rect.minY + r))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.minX + r, y: rect.minY),
-            control: CGPoint(x: rect.minX, y: rect.minY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX - r, y: rect.minY))
-        path.addQuadCurve(
-            to: CGPoint(x: rect.maxX, y: rect.minY + r),
-            control: CGPoint(x: rect.maxX, y: rect.minY)
-        )
-        path.addLine(to: CGPoint(x: rect.maxX, y: rect.maxY))
-        path.closeSubpath()
-
-        return path
     }
 }
 
@@ -2548,7 +2694,7 @@ struct SessionsPane: View {
                 }
             }
         }
-        .radixCard(elevated: false, radius: 12)
+        .background(RadixTheme.surface)
     }
 
     private var tabHeaderRow: some View {
@@ -2565,7 +2711,7 @@ struct SessionsPane: View {
             Spacer()
         }
         .frame(height: 42)
-        .background(RadixTheme.surfaceSubtle)
+        .background(.bar)
         .overlay(
             Rectangle()
                 .fill(RadixTheme.border)
@@ -2580,8 +2726,6 @@ struct SessionsPane: View {
 
     private func tabHeader(_ tab: SessionTab) -> some View {
         let selected = sessions.selectedID == tab.id
-        let activeFill = RadixTheme.surfaceElevated
-        let inactiveFill = RadixTheme.surfaceSubtle.opacity(0.82)
 
         return HStack(spacing: 8) {
             Button(tab.title) {
@@ -2605,25 +2749,13 @@ struct SessionsPane: View {
         .padding(.vertical, 7)
         .frame(minWidth: 128, alignment: .leading)
         .background(
-            BrowserTabShape(cornerRadius: 7)
-                .fill(
-                    selected
-                        ? activeFill
-                        : inactiveFill
-                )
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .fill(selected ? RadixTheme.surfaceElevated : Color.clear)
         )
         .overlay(
-            BrowserTabShape(cornerRadius: 7)
-                .stroke(RadixTheme.border, lineWidth: 1)
+            RoundedRectangle(cornerRadius: 7, style: .continuous)
+                .stroke(selected ? RadixTheme.border : Color.clear, lineWidth: 1)
         )
-        .overlay(alignment: .bottom) {
-            if selected {
-                Rectangle()
-                    .fill(activeFill)
-                    .frame(height: 1.6)
-                    .offset(y: 0.5)
-            }
-        }
         .contextMenu {
             Button("Open") {
                 sessions.selectedID = tab.id
@@ -2704,7 +2836,14 @@ struct ShortcutRowEditor: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .radixCard(elevated: false, radius: 10)
+        .background(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .fill(RadixTheme.surfaceSubtle)
+        )
+        .overlay(
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(RadixTheme.border, lineWidth: 1)
+        )
     }
 
     private func binding(for action: ShortcutAction) -> Binding<ShortcutBinding> {
@@ -2754,13 +2893,13 @@ struct ShortcutManagerSheet: View {
                 Button("Reset Defaults") {
                     store.resetToDefaults()
                 }
-                .buttonStyle(RadixSecondaryButtonStyle())
+                .buttonStyle(.bordered)
                 Spacer()
                 Button("Close") {
                     isPresented = false
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(RadixPrimaryButtonStyle())
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding(16)
@@ -2787,8 +2926,6 @@ struct ContentView: View {
     @State private var statusMessage: String = ""
     @State private var sessionStatusMessage: String = ""
     @State private var sessionStatusIsError: Bool = false
-    @State private var groupTemplates: [UUID: HostEntry] = [:]
-    @State private var groupTemplatePasswords: [UUID: String] = [:]
     @State private var hostEditorMode: HostEditorMode = .host
     @State private var editingGroupSettingsID: UUID?
     @State private var isSidebarHidden: Bool = false
@@ -2796,22 +2933,15 @@ struct ContentView: View {
     @State private var renameGroupDraft: String = ""
     @State private var renameGroupError: String = ""
     @State private var isShortcutManagerPresented: Bool = false
+    @State private var cachedTreeRoots: [SidebarNode] = []
+    @State private var cachedGroupOptions: [GroupOption] = []
+    @State private var cachedSortedHostsForFiles: [HostEntry] = []
     private let hostDragPrefix = "macssh-host:"
 
     private struct PartialPersistedData: Decodable {
         var groups: [HostGroup]?
         var hosts: [HostEntry]?
-    }
-
-    private enum ImportPayloadError: LocalizedError {
-        case unsupportedFormat
-
-        var errorDescription: String? {
-            switch self {
-            case .unsupportedFormat:
-                return "Unsupported file format. Expected JSON with groups/hosts or host list."
-            }
-        }
+        var groupTemplates: [UUID: GroupHostTemplate]?
     }
 
     var body: some View {
@@ -2846,21 +2976,19 @@ struct ContentView: View {
                 }
             }
             ensureFilesHostSelection()
+            refreshSidebarCaches()
             reloadDraftsFromSelection()
         }
         .onChange(of: sidebarSelection) { selection in
             handleSidebarSelection(selection)
         }
-        .onChange(of: filesHostID) { _ in
-            if selectedPage == .files {
-                fileBrowser.activate(host: selectedFilesHost)
-            }
+        .onChange(of: selectedPage) { page in
+            handleSelectedPageChange(page)
         }
-        .onChange(of: store.hosts.map(\.id)) { _ in
+        .onChange(of: store.dataRevision) { _ in
+            refreshSidebarCaches()
             ensureFilesHostSelection()
-            if selectedPage == .files {
-                fileBrowser.activate(host: selectedFilesHost)
-            }
+            synchronizeFileBrowserSelection()
         }
         .onReceive(NotificationCenter.default.publisher(for: .macSSHSystemMenuAction)) { notification in
             guard let action = notification.object as? SystemMenuAction else { return }
@@ -2880,32 +3008,30 @@ struct ContentView: View {
                 Image(systemName: isSidebarHidden ? "sidebar.left" : "sidebar.left")
                     .imageScale(.large)
             }
-            .buttonStyle(RadixIconButtonStyle())
+            .buttonStyle(.borderless)
             .help(isSidebarHidden ? "Show Menu" : "Hide Menu")
 
-            Text("Workspace")
-                .font(.caption.weight(.semibold))
-                .foregroundStyle(RadixTheme.textMuted)
-
-            HStack(spacing: 6) {
-                pageChip("TTY", page: .sessions)
-                pageChip("Files", page: .files)
+            Picker("Workspace", selection: $selectedPage) {
+                Text("TTY").tag(AppPage.sessions)
+                Text("Files").tag(AppPage.files)
                 if selectedPage == .hosts {
-                    pageChip("Settings", page: .hosts)
+                    Text("Settings").tag(AppPage.hosts)
                 }
             }
-            .padding(3)
-            .radixCard(elevated: false, radius: 9)
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .frame(width: selectedPage == .hosts ? 250 : 170)
 
             if selectedPage == .sessions {
                 Divider().frame(height: 16)
 
-                HStack(spacing: 6) {
-                    displayModeChip("TTY", mode: .tty)
-                    displayModeChip("Grid", mode: .grid)
+                Picker("Display Mode", selection: $sessions.displayMode) {
+                    Text("TTY").tag(SessionDisplayMode.tty)
+                    Text("Grid").tag(SessionDisplayMode.grid)
                 }
-                .padding(3)
-                .radixCard(elevated: false, radius: 9)
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(width: 150)
 
                 if sessions.displayMode == .grid {
                     Stepper("Cols: \(sessions.gridColumns)", value: $sessions.gridColumns, in: 1...6)
@@ -2931,7 +3057,7 @@ struct ContentView: View {
                 }
                 .disabled(sessions.tabs.isEmpty)
                 .controlSize(.small)
-                .buttonStyle(RadixSecondaryButtonStyle())
+                .buttonStyle(.bordered)
             }
 
             Spacer(minLength: 8)
@@ -2945,52 +3071,12 @@ struct ContentView: View {
         }
         .padding(.horizontal, 12)
         .padding(.vertical, 8)
-        .background(RadixTheme.surfaceSubtle)
+        .background(.bar)
         .overlay(
             Rectangle()
                 .fill(RadixTheme.border)
                 .frame(height: 1),
             alignment: .bottom
-        )
-    }
-
-    private func pageChip(_ title: String, page: AppPage) -> some View {
-        let isSelected = selectedPage == page
-        return Button(title) {
-            selectedPage = page
-        }
-        .buttonStyle(.plain)
-        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-        .foregroundStyle(isSelected ? RadixTheme.accent : RadixTheme.textMuted)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(isSelected ? RadixTheme.accentSoft : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(isSelected ? RadixTheme.accent.opacity(0.45) : Color.clear, lineWidth: 1)
-        )
-    }
-
-    private func displayModeChip(_ title: String, mode: SessionDisplayMode) -> some View {
-        let isSelected = sessions.displayMode == mode
-        return Button(title) {
-            sessions.displayMode = mode
-        }
-        .buttonStyle(.plain)
-        .font(.system(size: 12, weight: isSelected ? .semibold : .medium))
-        .foregroundStyle(isSelected ? RadixTheme.accent : RadixTheme.textMuted)
-        .padding(.horizontal, 10)
-        .padding(.vertical, 6)
-        .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .fill(isSelected ? RadixTheme.accentSoft : Color.clear)
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
-                .stroke(isSelected ? RadixTheme.accent.opacity(0.45) : Color.clear, lineWidth: 1)
         )
     }
 
@@ -3013,12 +3099,12 @@ struct ContentView: View {
                 Button("Cancel") {
                     cancelRenameGroup()
                 }
-                .buttonStyle(RadixSecondaryButtonStyle())
+                .buttonStyle(.bordered)
                 Button("Rename") {
                     applyRenameGroup(groupID: groupID)
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(RadixPrimaryButtonStyle())
+                .buttonStyle(.borderedProminent)
             }
         }
         .padding(16)
@@ -3037,7 +3123,7 @@ struct ContentView: View {
             }
             .padding(.horizontal, 8)
             .padding(.vertical, 6)
-            .background(RadixTheme.surfaceSubtle)
+            .background(.bar)
             .overlay(
                 Rectangle()
                     .fill(RadixTheme.border)
@@ -3046,9 +3132,10 @@ struct ContentView: View {
             )
 
             List(selection: $sidebarSelection) {
-                OutlineGroup(treeRoots, children: \.children) { node in
+                OutlineGroup(cachedTreeRoots, children: \.children) { node in
                     draggableTreeRow(node)
                         .tag(node.selection)
+                        .listRowBackground(sidebarRowBackground(for: node))
                         .contextMenu { treeContextMenu(node) }
                         .onDrop(of: [UTType.text], isTargeted: nil) { providers in
                             handleHostDrop(on: node.selection, providers: providers)
@@ -3059,8 +3146,7 @@ struct ContentView: View {
             .environment(\.defaultMinListRowHeight, 20)
             .background(HorizontalScrollLock())
         }
-        .radixCard(elevated: false, radius: 10)
-        .padding(6)
+        .background(RadixTheme.surface)
     }
 
     private var workspacePane: some View {
@@ -3124,10 +3210,13 @@ struct ContentView: View {
     }
 
     private var emptyHostsSelectionView: some View {
-        Text("Use right-click on a host or group and choose Open Settings")
-            .foregroundStyle(RadixTheme.textMuted)
-            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-            .radixCard(elevated: false, radius: 12)
+        GroupBox {
+            Text("Use right-click on a host or group and choose Open Settings")
+                .foregroundStyle(RadixTheme.textMuted)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
+                .padding(.vertical, 24)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
     }
 
     private var sessionsPage: some View {
@@ -3137,12 +3226,11 @@ struct ContentView: View {
     private var filesPage: some View {
         FileTransferPane(
             service: fileBrowser,
-            hosts: sortedHostsForFiles,
+            hosts: cachedSortedHostsForFiles,
             selectedHostID: $filesHostID
         )
         .onAppear {
             ensureFilesHostSelection()
-            fileBrowser.activate(host: selectedFilesHost)
         }
     }
 
@@ -3161,7 +3249,7 @@ struct ContentView: View {
                 .font(.system(size: 11, weight: .semibold))
                 .frame(width: 20, height: 18)
         }
-        .buttonStyle(RadixIconButtonStyle())
+        .buttonStyle(.borderless)
     }
 
     @ViewBuilder
@@ -3169,16 +3257,22 @@ struct ContentView: View {
         switch node.selection {
         case .host(let id):
             treeRow(node)
-                .onTapGesture(count: 2) {
+                .onTapGesture {
+                    selectSidebarNode(node.selection)
+                }
+                .simultaneousGesture(TapGesture(count: 2).onEnded {
                     guard let host = store.host(by: id) else { return }
                     let result = sessions.open(for: host)
                     applySessionOpenResult(result, host: host)
-                }
+                })
                 .onDrag {
                     NSItemProvider(object: "\(hostDragPrefix)\(id.uuidString)" as NSString)
                 }
         default:
             treeRow(node)
+                .onTapGesture {
+                    selectSidebarNode(node.selection)
+                }
         }
     }
 
@@ -3202,6 +3296,17 @@ struct ContentView: View {
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         .contentShape(Rectangle())
+    }
+
+    @ViewBuilder
+    private func sidebarRowBackground(for node: SidebarNode) -> some View {
+        if sidebarSelection == node.selection {
+            RoundedRectangle(cornerRadius: 6, style: .continuous)
+                .fill(RadixTheme.accent.opacity(0.16))
+                .padding(.vertical, 1)
+        } else {
+            Color.clear
+        }
     }
 
     private enum HostDropTarget {
@@ -3261,9 +3366,7 @@ struct ContentView: View {
                 }
 
                 store.moveHost(id: hostID, to: targetGroupID)
-                selectedHostID = hostID
-                filesHostID = hostID
-                loadHostDraft(hostID)
+                updateSelectedHostContext(hostID, loadDraft: selectedPage == .hosts)
                 statusMessage = "Host moved"
             }
         }
@@ -3296,10 +3399,41 @@ struct ContentView: View {
         }
     }
 
-    private var treeRoots: [SidebarNode] {
-        var roots = buildGroupNodes(parentId: nil)
+    private func buildTreeRoots() -> [SidebarNode] {
+        let groupChildren = Dictionary(grouping: store.groups, by: \.parentId)
+        let hostChildren = Dictionary(grouping: store.hosts, by: \.groupId)
 
-        let ungroupedHosts = store.sortedHosts(groupId: nil)
+        func sortedGroups(parentId: UUID?) -> [HostGroup] {
+            (groupChildren[parentId] ?? []).sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        }
+
+        func sortedHosts(groupId: UUID?) -> [HostEntry] {
+            (hostChildren[groupId] ?? []).sorted {
+                $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
+            }
+        }
+
+        func buildGroupNodes(parentId: UUID?) -> [SidebarNode] {
+            sortedGroups(parentId: parentId).map { group in
+                let nestedGroups = buildGroupNodes(parentId: group.id)
+                let hosts = sortedHosts(groupId: group.id).map(hostNode)
+                let children = nestedGroups + hosts
+
+                return SidebarNode(
+                    id: "group-\(group.id.uuidString)",
+                    selection: .group(group.id),
+                    title: group.name,
+                    subtitle: nil,
+                    isGroup: true,
+                    children: children.isEmpty ? nil : children
+                )
+            }
+        }
+
+        var roots = buildGroupNodes(parentId: nil)
+        let ungroupedHosts = sortedHosts(groupId: nil)
         if !ungroupedHosts.isEmpty {
             let children = ungroupedHosts.map(hostNode)
             roots.append(
@@ -3317,23 +3451,6 @@ struct ContentView: View {
         return roots
     }
 
-    private func buildGroupNodes(parentId: UUID?) -> [SidebarNode] {
-        store.sortedGroups(parentId: parentId).map { group in
-            let groupChildren = buildGroupNodes(parentId: group.id)
-            let hostChildren = store.sortedHosts(groupId: group.id).map(hostNode)
-            let allChildren = groupChildren + hostChildren
-
-            return SidebarNode(
-                id: "group-\(group.id.uuidString)",
-                selection: .group(group.id),
-                title: group.name,
-                subtitle: nil,
-                isGroup: true,
-                children: allChildren.isEmpty ? nil : allChildren
-            )
-        }
-    }
-
     private func hostNode(_ host: HostEntry) -> SidebarNode {
         SidebarNode(
             id: "host-\(host.id.uuidString)",
@@ -3345,13 +3462,21 @@ struct ContentView: View {
         )
     }
 
-    private var groupOptions: [GroupOption] {
+    private func buildGroupOptions() -> [GroupOption] {
         var options: [GroupOption] = [
             GroupOption(id: "ungrouped-option", groupId: nil, label: "Ungrouped")
         ]
 
+        let groupChildren = Dictionary(grouping: store.groups, by: \.parentId)
+
+        func sortedGroups(parentId: UUID?) -> [HostGroup] {
+            (groupChildren[parentId] ?? []).sorted {
+                $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+            }
+        }
+
         func append(parentId: UUID?, depth: Int) {
-            for group in store.sortedGroups(parentId: parentId) {
+            for group in sortedGroups(parentId: parentId) {
                 let prefix = String(repeating: "  ", count: depth)
                 options.append(
                     GroupOption(
@@ -3368,10 +3493,12 @@ struct ContentView: View {
         return options
     }
 
+    private var groupOptions: [GroupOption] {
+        cachedGroupOptions
+    }
+
     private var sortedHostsForFiles: [HostEntry] {
-        store.hosts.sorted {
-            $0.displayName.localizedCaseInsensitiveCompare($1.displayName) == .orderedAscending
-        }
+        cachedSortedHostsForFiles
     }
 
     private var selectedFilesHost: HostEntry? {
@@ -3402,6 +3529,12 @@ struct ContentView: View {
         filesHostID = sortedHostsForFiles.first?.id
     }
 
+    private func refreshSidebarCaches() {
+        cachedTreeRoots = buildTreeRoots()
+        cachedGroupOptions = buildGroupOptions()
+        cachedSortedHostsForFiles = store.sortedAllHosts
+    }
+
     private var groupScopeDescription: String? {
         guard hostEditorMode == .group, let groupId = editingGroupSettingsID else { return nil }
         let count = hostIDsInGroupTree(groupId).count
@@ -3429,15 +3562,6 @@ struct ContentView: View {
         }
     }
 
-    private func removeGroupTemplates(_ groupID: UUID) {
-        var ids: Set<UUID> = []
-        collectGroupDescendants(groupID, into: &ids)
-        for id in ids {
-            groupTemplates.removeValue(forKey: id)
-            groupTemplatePasswords.removeValue(forKey: id)
-        }
-    }
-
     private func deleteSelectionFromKeyboard() {
         if NSApp.keyWindow?.firstResponder is NSTextView {
             return
@@ -3462,7 +3586,6 @@ struct ContentView: View {
 
         guard !removedGroupIDs.isEmpty else { return }
 
-        removeGroupTemplates(groupID)
         store.removeGroup(id: groupID)
 
         if let currentGroupID = selectedGroupID, removedGroupIDs.contains(currentGroupID) {
@@ -3484,9 +3607,6 @@ struct ContentView: View {
         }
 
         ensureFilesHostSelection()
-        if selectedPage == .files {
-            fileBrowser.activate(host: selectedFilesHost)
-        }
         statusMessage = "Group deleted"
     }
 
@@ -3514,22 +3634,14 @@ struct ContentView: View {
         }
 
         ensureFilesHostSelection()
-        if selectedPage == .files {
-            fileBrowser.activate(host: selectedFilesHost)
-        }
         statusMessage = "Host deleted"
     }
 
     private func openHostSettings(_ hostID: UUID) {
         guard store.host(by: hostID) != nil else { return }
-        selectedHostID = hostID
-        selectedGroupID = store.host(by: hostID)?.groupId
-        filesHostID = hostID
+        updateSelectedHostContext(hostID, loadDraft: true)
         sidebarSelection = .host(hostID)
-        hostEditorMode = .host
-        editingGroupSettingsID = nil
         selectedPage = .hosts
-        loadHostDraft(hostID)
     }
 
     private func openGroupSettings(_ groupID: UUID) {
@@ -3539,15 +3651,14 @@ struct ContentView: View {
         editingGroupSettingsID = groupID
         selectedPage = .hosts
 
-        let targetHostIDs = hostIDsInGroupTree(groupID)
-        if let firstID = targetHostIDs.first, let baseHost = store.host(by: firstID) {
-            hostDraft = baseHost
-            passwordDraft = KeychainHelper.loadPassword(for: baseHost.id)
+        if let template = store.groupTemplate(for: groupID) {
+            hostDraft = template.makeHostDraft(groupId: groupID)
+            passwordDraft = KeychainHelper.loadGroupTemplatePassword(for: groupID)
         } else {
-            if var template = groupTemplates[groupID] {
-                template.groupId = groupID
-                hostDraft = template
-                passwordDraft = groupTemplatePasswords[groupID] ?? ""
+            let targetHostIDs = hostIDsInGroupTree(groupID)
+            if let firstID = targetHostIDs.first, let baseHost = store.host(by: firstID) {
+                hostDraft = baseHost
+                passwordDraft = KeychainHelper.loadPassword(for: baseHost.id)
             } else {
                 hostDraft = HostEntry(groupId: groupID)
                 passwordDraft = ""
@@ -3635,28 +3746,41 @@ struct ContentView: View {
         sessionStatusIsError = isError
     }
 
-    private func decodeImportPayload(from data: Data) throws -> PersistedData {
+    private func decodeImportPayload(from data: Data) throws -> ImportedConfigPayload {
         let decoder = JSONDecoder()
 
         if let payload = try? decoder.decode(PersistedData.self, from: data) {
-            return payload
+            return ImportedConfigPayload(data: payload, format: .appJSON)
         }
 
         if let partial = try? decoder.decode(PartialPersistedData.self, from: data),
            let hosts = partial.hosts {
-            return PersistedData(groups: partial.groups ?? [], hosts: hosts)
+            return ImportedConfigPayload(
+                data: PersistedData(
+                    groups: partial.groups ?? [],
+                    hosts: hosts,
+                    groupTemplates: partial.groupTemplates ?? [:]
+                ),
+                format: .appJSON
+            )
         }
 
         if let hostsOnly = try? decoder.decode([HostEntry].self, from: data) {
-            return PersistedData(groups: [], hosts: hostsOnly)
+            return ImportedConfigPayload(
+                data: PersistedData(groups: [], hosts: hostsOnly, groupTemplates: [:]),
+                format: .appJSON
+            )
         }
 
-        throw ImportPayloadError.unsupportedFormat
+        if let text = String(data: data, encoding: .utf8) {
+            let payload = try OpenSSHConfigCodec.decode(text)
+            return ImportedConfigPayload(data: payload, format: .openSSH)
+        }
+
+        throw OpenSSHConfigError.unsupportedFormat
     }
 
     private func reselectAfterImport() {
-        groupTemplates.removeAll()
-        groupTemplatePasswords.removeAll()
         hostEditorMode = .host
         editingGroupSettingsID = nil
         hostDraft = nil
@@ -3677,7 +3801,7 @@ struct ContentView: View {
         }
 
         reloadDraftsFromSelection()
-        fileBrowser.activate(host: selectedFilesHost)
+        synchronizeFileBrowserSelection()
     }
 
     private func importConfig() {
@@ -3685,7 +3809,8 @@ struct ContentView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
-        panel.allowedContentTypes = [.json]
+        panel.showsHiddenFiles = true
+        panel.directoryURL = preferredSSHDirectoryURL()
         panel.prompt = "Import"
 
         guard panel.runModal() == .OK, let fileURL = panel.url else { return }
@@ -3693,9 +3818,14 @@ struct ContentView: View {
         do {
             let data = try Data(contentsOf: fileURL)
             let payload = try decodeImportPayload(from: data)
-            store.replaceAll(groups: payload.groups, hosts: payload.hosts)
+            store.replaceAll(
+                groups: payload.data.groups,
+                hosts: payload.data.hosts,
+                groupTemplates: payload.data.groupTemplates
+            )
             reselectAfterImport()
-            updateStatus("Imported \(store.groups.count) group(s), \(store.hosts.count) host(s)")
+            let formatName = payload.format == .openSSH ? "OpenSSH config" : "JSON config"
+            updateStatus("Imported \(formatName): \(store.groups.count) group(s), \(store.hosts.count) host(s)")
         } catch {
             updateStatus("Import failed: \(error.localizedDescription)", isError: true)
         }
@@ -3704,7 +3834,7 @@ struct ContentView: View {
     private func exportConfig() {
         let panel = NSSavePanel()
         panel.canCreateDirectories = true
-        panel.allowedContentTypes = [.json]
+        panel.allowedContentTypes = [.json, .plainText]
         panel.nameFieldStringValue = "macsshmanager-export.json"
         panel.prompt = "Export"
 
@@ -3712,14 +3842,24 @@ struct ContentView: View {
 
         do {
             let payload = store.currentData()
-            let encoder = JSONEncoder()
-            encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
-            let data = try encoder.encode(payload)
-            try data.write(to: fileURL, options: .atomic)
-            updateStatus("Exported \(payload.groups.count) group(s), \(payload.hosts.count) host(s)")
+            if exportFormat(for: fileURL) == .openSSH {
+                let text = OpenSSHConfigCodec.encode(hosts: payload.hosts)
+                try text.write(to: fileURL, atomically: true, encoding: .utf8)
+                updateStatus("Exported OpenSSH config with \(payload.hosts.count) host(s)")
+            } else {
+                let encoder = JSONEncoder()
+                encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
+                let data = try encoder.encode(payload)
+                try data.write(to: fileURL, options: .atomic)
+                updateStatus("Exported \(payload.groups.count) group(s), \(payload.hosts.count) host(s)")
+            }
         } catch {
             updateStatus("Export failed: \(error.localizedDescription)", isError: true)
         }
+    }
+
+    private func exportFormat(for fileURL: URL) -> ConfigImportFormat {
+        fileURL.pathExtension.lowercased() == "json" ? .appJSON : .openSSH
     }
 
     private func handleSystemMenuAction(_ action: SystemMenuAction) {
@@ -3787,7 +3927,7 @@ struct ContentView: View {
         guard hasUser else { return false }
 
         if host.authMethod == .key {
-            return !host.keyPath.trimmed.isEmpty
+            return true
         }
         return !passwordDraft.isEmpty
     }
@@ -3812,18 +3952,8 @@ struct ContentView: View {
         case .page(let page):
             selectedPage = page
             statusMessage = ""
-            if selectedPage == .files {
-                ensureFilesHostSelection()
-                fileBrowser.activate(host: selectedFilesHost)
-            }
         case .host(let hostId):
-            selectedHostID = hostId
-            selectedGroupID = store.host(by: hostId)?.groupId
-            filesHostID = hostId
-            loadHostDraft(hostId)
-            if selectedPage == .files {
-                fileBrowser.activate(host: store.host(by: hostId))
-            }
+            updateSelectedHostContext(hostId, loadDraft: selectedPage == .hosts)
             statusMessage = ""
         case .group(let groupId):
             if hostEditorMode == .group, editingGroupSettingsID == groupId, selectedPage == .hosts, hostDraft != nil {
@@ -3844,6 +3974,50 @@ struct ContentView: View {
             hostEditorMode = .host
             editingGroupSettingsID = nil
             statusMessage = ""
+        }
+    }
+
+    private func handleSelectedPageChange(_ page: AppPage) {
+        switch page {
+        case .hosts:
+            if hostEditorMode == .group {
+                if let groupID = editingGroupSettingsID {
+                    openGroupSettings(groupID)
+                }
+            } else if let hostID = selectedHostID {
+                loadHostDraft(hostID)
+            }
+        case .files:
+            ensureFilesHostSelection()
+            synchronizeFileBrowserSelection()
+        case .sessions:
+            break
+        }
+    }
+
+    private func selectSidebarNode(_ selection: SidebarSelection) {
+        guard sidebarSelection != selection else { return }
+        sidebarSelection = selection
+    }
+
+    private func synchronizeFileBrowserSelection() {
+        guard selectedPage == .files else { return }
+        ensureFilesHostSelection()
+        fileBrowser.activate(host: selectedFilesHost)
+    }
+
+    private func updateSelectedHostContext(_ hostID: UUID, loadDraft: Bool) {
+        guard let host = store.host(by: hostID) else { return }
+
+        selectedHostID = hostID
+        selectedGroupID = host.groupId
+        filesHostID = hostID
+
+        if loadDraft {
+            loadHostDraft(hostID)
+        } else {
+            hostEditorMode = .host
+            editingGroupSettingsID = nil
         }
     }
 
@@ -3911,13 +4085,13 @@ struct ContentView: View {
         let host = store.addHost(in: groupId)
         var preparedHost = host
 
-        if let groupId, let template = groupTemplates[groupId] {
+        if let groupId, let template = store.groupTemplate(for: groupId) {
             applyManagedSettings(from: template, to: &preparedHost)
             preparedHost.groupId = groupId
             store.updateHost(preparedHost)
 
             if shouldPersistKeychainPassword(for: preparedHost) {
-                let templatePassword = groupTemplatePasswords[groupId] ?? ""
+                let templatePassword = KeychainHelper.loadGroupTemplatePassword(for: groupId)
                 if templatePassword.isEmpty {
                     KeychainHelper.deletePassword(for: preparedHost.id)
                 } else {
@@ -3947,12 +4121,31 @@ struct ContentView: View {
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = false
+        panel.showsHiddenFiles = true
+        panel.directoryURL = preferredSSHDirectoryURL()
         panel.prompt = "Choose"
 
         if panel.runModal() == .OK, let path = panel.url?.path {
-            hostDraft?.keyPath = path
+            if path.hasSuffix(".pub") {
+                let privateKeyPath = String(path.dropLast(4))
+                if FileManager.default.fileExists(atPath: privateKeyPath) {
+                    hostDraft?.keyPath = privateKeyPath
+                } else {
+                    hostDraft?.keyPath = path
+                }
+            } else {
+                hostDraft?.keyPath = path
+            }
             statusMessage = ""
         }
+    }
+
+    private func preferredSSHDirectoryURL() -> URL {
+        let sshURL = URL(fileURLWithPath: NSHomeDirectory()).appendingPathComponent(".ssh", isDirectory: true)
+        if FileManager.default.fileExists(atPath: sshURL.path) {
+            return sshURL
+        }
+        return URL(fileURLWithPath: NSHomeDirectory(), isDirectory: true)
     }
 
     private func sanitizeHostDraft(_ host: inout HostEntry) {
@@ -4011,27 +4204,19 @@ struct ContentView: View {
         return false
     }
 
-    private func applyManagedSettings(from template: HostEntry, to host: inout HostEntry) {
-        host.connectionProtocol = template.connectionProtocol
-        host.terminalLaunchMode = template.terminalLaunchMode
-        host.username = template.username
-        host.port = template.port
-        host.authMethod = template.authMethod
-        host.keyPath = template.keyPath
-        host.sshSettings = template.sshSettings
-        host.fileTransfer = template.fileTransfer
+    private func applyManagedSettings(from template: GroupHostTemplate, to host: inout HostEntry) {
+        template.apply(to: &host)
     }
 
-    private func applyHostDraftToGroup(_ template: HostEntry, groupID: UUID) {
+    private func applyHostDraftToGroup(_ draft: HostEntry, groupID: UUID) {
         let targetIDs = hostIDsInGroupTree(groupID)
+        let template = GroupHostTemplate(host: draft)
 
-        var savedTemplate = template
-        savedTemplate.groupId = groupID
-        groupTemplates[groupID] = savedTemplate
-        if shouldPersistKeychainPassword(for: template), !passwordDraft.isEmpty {
-            groupTemplatePasswords[groupID] = passwordDraft
+        store.updateGroupTemplate(template, for: groupID)
+        if shouldPersistKeychainPassword(for: draft), !passwordDraft.isEmpty {
+            _ = KeychainHelper.saveGroupTemplatePassword(passwordDraft, for: groupID)
         } else {
-            groupTemplatePasswords.removeValue(forKey: groupID)
+            KeychainHelper.deleteGroupTemplatePassword(for: groupID)
         }
 
         guard !targetIDs.isEmpty else {
@@ -4044,7 +4229,7 @@ struct ContentView: View {
             applyManagedSettings(from: template, to: &current)
             store.updateHost(current)
 
-            if shouldPersistKeychainPassword(for: template) {
+            if shouldPersistKeychainPassword(for: draft) {
                 if passwordDraft.isEmpty {
                     KeychainHelper.deletePassword(for: hostID)
                 } else {
@@ -4173,7 +4358,7 @@ private enum AppAboutPanel {
     static func show() {
         let info = Bundle.main.infoDictionary ?? [:]
         let appName = info["CFBundleName"] as? String ?? "macsshmanager"
-        let shortVersion = info["CFBundleShortVersionString"] as? String ?? "0.1.0"
+        let shortVersion = info["CFBundleShortVersionString"] as? String ?? "0.1.2"
         let build = info["CFBundleVersion"] as? String ?? "1"
         let copyright =
             info["NSHumanReadableCopyright"] as? String ??

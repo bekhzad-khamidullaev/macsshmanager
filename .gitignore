@@ -5,4 +5,4 @@ dist/*.dmg
 
 macsshmanager/.build/
 macsshmanager/build/
-
+.clang-module-cache/

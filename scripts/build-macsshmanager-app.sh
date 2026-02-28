@@ -6,6 +6,7 @@ APP_DIR="$ROOT_DIR/macsshmanager"
 DIST_DIR="$ROOT_DIR/dist"
 BUNDLE_DIR="$DIST_DIR/macsshmanager.app"
 APP_ICON_NAME="AppIcon.icns"
+CUSTOM_ICON_PATH="$ROOT_DIR/assets/$APP_ICON_NAME"
 
 TERMINAL_ICON_PATH=""
 for candidate in \
@@ -26,9 +27,13 @@ fi
 cd "$APP_DIR"
 swift build -c release
 
+"$ROOT_DIR/scripts/generate-app-icon.sh"
+
 mkdir -p "$BUNDLE_DIR/Contents/MacOS" "$BUNDLE_DIR/Contents/Resources"
 cp -f .build/release/macsshmanager "$BUNDLE_DIR/Contents/MacOS/macsshmanager"
-if [[ -n "$TERMINAL_ICON_PATH" ]]; then
+if [[ -f "$CUSTOM_ICON_PATH" ]]; then
+  cp -f "$CUSTOM_ICON_PATH" "$BUNDLE_DIR/Contents/Resources/$APP_ICON_NAME"
+elif [[ -n "$TERMINAL_ICON_PATH" ]]; then
   cp -f "$TERMINAL_ICON_PATH" "$BUNDLE_DIR/Contents/Resources/$APP_ICON_NAME"
 else
   echo "Warning: Terminal icon not found, default app icon will be used."
@@ -52,7 +57,7 @@ cat > "$BUNDLE_DIR/Contents/Info.plist" <<'PLIST'
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
-  <string>0.1.0</string>
+  <string>0.1.2</string>
   <key>CFBundleVersion</key>
   <string>1</string>
   <key>LSMinimumSystemVersion</key>
@@ -63,7 +68,7 @@ cat > "$BUNDLE_DIR/Contents/Info.plist" <<'PLIST'
 </plist>
 PLIST
 
-if [[ -n "$TERMINAL_ICON_PATH" ]]; then
+if [[ -f "$CUSTOM_ICON_PATH" || -n "$TERMINAL_ICON_PATH" ]]; then
   /usr/libexec/PlistBuddy -c "Delete :CFBundleIconFile" "$BUNDLE_DIR/Contents/Info.plist" >/dev/null 2>&1 || true
   /usr/libexec/PlistBuddy -c "Add :CFBundleIconFile string $APP_ICON_NAME" "$BUNDLE_DIR/Contents/Info.plist"
 fi
