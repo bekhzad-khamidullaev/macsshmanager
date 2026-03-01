@@ -38,7 +38,7 @@ struct RadixCardModifier: ViewModifier {
 }
 
 extension View {
-    func radixCard(elevated: Bool = false, radius: CGFloat = 12) -> some View {
+    func radixCard(elevated: Bool = false, radius: CGFloat = 8) -> some View {
         modifier(RadixCardModifier(elevated: elevated, radius: radius))
     }
 }
@@ -47,8 +47,8 @@ struct RadixPrimaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .semibold))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(configuration.isPressed ? Color.accentColor.opacity(0.78) : Color.accentColor)
@@ -65,8 +65,8 @@ struct RadixSecondaryButtonStyle: ButtonStyle {
     func makeBody(configuration: Configuration) -> some View {
         configuration.label
             .font(.system(size: 13, weight: .medium))
-            .padding(.horizontal, 12)
-            .padding(.vertical, 5)
+            .padding(.horizontal, 10)
+            .padding(.vertical, 4)
             .background(
                 RoundedRectangle(cornerRadius: 7, style: .continuous)
                     .fill(configuration.isPressed ? Color(nsColor: .controlBackgroundColor) : Color(nsColor: .windowBackgroundColor))

@@ -9,7 +9,7 @@ Native macOS SSH manager with saved hosts, multi-session workflow, file transfer
 - Import/export of app JSON and OpenSSH `~/.ssh/config`.
 - OpenSSH key workflow with optional explicit `IdentityFile` or default keys via `ssh-agent`.
 - Password storage in macOS Keychain.
-- File transfer panel (SFTP/SCP/FTP modes).
+- Dual-pane commander file transfer (SFTP/SCP/FTP modes) with `F3`-`F8` operations.
 - Advanced SSH host settings.
 
 ## Project structure
@@ -37,7 +37,7 @@ Output:
 
 ## Release artifact
 Current release includes downloadable DMG:
-- https://github.com/bekhzad-khamidullaev/macsshmanager/releases/tag/v0.1.2
+- https://github.com/bekhzad-khamidullaev/macsshmanager/releases/tag/v0.1.3
 
 ## Support
 If this project helps you, you can support development:

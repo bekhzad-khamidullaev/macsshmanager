@@ -165,6 +165,90 @@ private enum RemoteTransferCommand {
         }
     }
 
+    static func createDirectory(host: HostEntry, remotePath: String) -> TransferResult<Void> {
+        switch host.fileTransfer.protocolMode {
+        case .sftp, .scp:
+            return runRemoteShell(host: host, command: "mkdir -p \(shellQuote(remotePath))", failureMessage: "Create folder failed")
+        case .ftp:
+            let credentials = ftpCredentials(for: host)
+            switch credentials {
+            case .failure(let error):
+                return .failure(error)
+            case .success(let creds):
+                let path = ftpCommandPath(remotePath)
+                let url = ftpURL(host: host, remotePath: "/")
+                switch runFTPCurl(host: host, credentials: creds, extraArgs: ["-Q", "MKD \(path)", url]) {
+                case .failure(let error):
+                    return .failure(error)
+                case .success(let result):
+                    guard result.succeeded else {
+                        return .failure(TransferError(result.combinedOutput.ifEmpty("Create folder failed")))
+                    }
+                    return .success(())
+                }
+            }
+        }
+    }
+
+    static func renamePath(host: HostEntry, from oldPath: String, to newPath: String) -> TransferResult<Void> {
+        switch host.fileTransfer.protocolMode {
+        case .sftp, .scp:
+            return runRemoteShell(
+                host: host,
+                command: "mv \(shellQuote(oldPath)) \(shellQuote(newPath))",
+                failureMessage: "Rename failed"
+            )
+        case .ftp:
+            let credentials = ftpCredentials(for: host)
+            switch credentials {
+            case .failure(let error):
+                return .failure(error)
+            case .success(let creds):
+                let fromPath = ftpCommandPath(oldPath)
+                let toPath = ftpCommandPath(newPath)
+                let url = ftpURL(host: host, remotePath: "/")
+                switch runFTPCurl(host: host, credentials: creds, extraArgs: ["-Q", "RNFR \(fromPath)", "-Q", "RNTO \(toPath)", url]) {
+                case .failure(let error):
+                    return .failure(error)
+                case .success(let result):
+                    guard result.succeeded else {
+                        return .failure(TransferError(result.combinedOutput.ifEmpty("Rename failed")))
+                    }
+                    return .success(())
+                }
+            }
+        }
+    }
+
+    static func deletePath(host: HostEntry, remotePath: String, isDirectory: Bool) -> TransferResult<Void> {
+        switch host.fileTransfer.protocolMode {
+        case .sftp, .scp:
+            let command = isDirectory
+                ? "rm -rf \(shellQuote(remotePath))"
+                : "rm -f \(shellQuote(remotePath))"
+            return runRemoteShell(host: host, command: command, failureMessage: "Delete failed")
+        case .ftp:
+            let credentials = ftpCredentials(for: host)
+            switch credentials {
+            case .failure(let error):
+                return .failure(error)
+            case .success(let creds):
+                let path = ftpCommandPath(remotePath)
+                let command = isDirectory ? "RMD \(path)" : "DELE \(path)"
+                let url = ftpURL(host: host, remotePath: "/")
+                switch runFTPCurl(host: host, credentials: creds, extraArgs: ["-Q", command, url]) {
+                case .failure(let error):
+                    return .failure(error)
+                case .success(let result):
+                    guard result.succeeded else {
+                        return .failure(TransferError(result.combinedOutput.ifEmpty("Delete failed")))
+                    }
+                    return .success(())
+                }
+            }
+        }
+    }
+
     private static func listWithSFTP(host: HostEntry, path: String) -> TransferResult<[RemoteFileItem]> {
         let target = sshTarget(host)
         guard let target else { return .failure("Host or username is empty") }
@@ -594,6 +678,24 @@ private enum RemoteTransferCommand {
         return "\"\(escaped)\""
     }
 
+    private static func runRemoteShell(host: HostEntry, command: String, failureMessage: String) -> TransferResult<Void> {
+        guard let target = sshTarget(host) else { return .failure("Host or username is empty") }
+        var args: [String] = []
+        args.append(contentsOf: sshOptionArgs(host: host))
+        args.append(contentsOf: ["-p", String(host.port), target, command])
+        let result = runSSHProgram(host: host, executable: "/usr/bin/ssh", args: args)
+        guard result.succeeded else {
+            return .failure(TransferError(result.combinedOutput.ifEmpty(failureMessage)))
+        }
+        return .success(())
+    }
+
+    private static func ftpCommandPath(_ path: String) -> String {
+        let value = path.trimmed
+        if value.isEmpty { return "/" }
+        return value.hasPrefix("/") ? value : "/" + value
+    }
+
     private static func ftpURL(host: HostEntry, remotePath: String) -> String {
         let scheme = host.fileTransfer.ftpUseTLS ? "ftps" : "ftp"
         let hostName = host.host.trimmed
@@ -741,7 +843,7 @@ private enum RemoteTransferCommand {
         return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
     }
 
-    private static func joinRemotePath(_ base: String, _ name: String) -> String {
+    static func joinRemotePath(_ base: String, _ name: String) -> String {
         let cleanBase = base.trimmed.isEmpty ? "." : base.trimmed
 
         if cleanBase == "/" {
@@ -1039,7 +1141,7 @@ final class RemoteFileService: ObservableObject {
         download(remoteFile: selected, localURL: localURL)
     }
 
-    private func upload(localURL: URL) {
+    func upload(localURL: URL) {
         guard let host = activeHost else { return }
 
         statusMessage = "Uploading \(localURL.lastPathComponent)..."
@@ -1061,7 +1163,7 @@ final class RemoteFileService: ObservableObject {
         }
     }
 
-    private func download(remoteFile: RemoteFileItem, localURL: URL) {
+    func download(remoteFile: RemoteFileItem, localURL: URL) {
         guard let host = activeHost else { return }
 
         statusMessage = "Downloading \(remoteFile.name)..."
@@ -1077,6 +1179,96 @@ final class RemoteFileService: ObservableObject {
                 case .success:
                     self.statusMessage = "Download completed"
                     self.addLog("Download completed: \((localPath as NSString).lastPathComponent)")
+                    self.refresh()
+                }
+            }
+        }
+    }
+
+    func createRemoteDirectory(named name: String) {
+        guard let host = activeHost else {
+            statusMessage = "Select a host"
+            return
+        }
+
+        let trimmed = name.trimmed
+        guard !trimmed.isEmpty else {
+            statusMessage = "Folder name is empty"
+            return
+        }
+
+        let destination = RemoteTransferCommand.joinRemotePath(remotePath, trimmed)
+        statusMessage = "Creating folder \(trimmed)..."
+        addLog("Create remote folder: \(destination)")
+
+        worker.async { [host, destination] in
+            let result = RemoteTransferCommand.createDirectory(host: host, remotePath: destination)
+            DispatchQueue.main.async {
+                switch result {
+                case .failure(let error):
+                    self.statusMessage = error.message
+                    self.addLog("Create folder failed: \(error.message)")
+                case .success:
+                    self.statusMessage = "Folder created"
+                    self.addLog("Created remote folder: \(destination)")
+                    self.refresh()
+                }
+            }
+        }
+    }
+
+    func renameRemoteItem(_ item: RemoteFileItem, to newName: String) {
+        guard let host = activeHost else {
+            statusMessage = "Select a host"
+            return
+        }
+
+        let trimmed = newName.trimmed
+        guard !trimmed.isEmpty else {
+            statusMessage = "New name is empty"
+            return
+        }
+
+        let parent = RemoteTransferCommand.parentPath(item.fullPath)
+        let destination = RemoteTransferCommand.joinRemotePath(parent, trimmed)
+        statusMessage = "Renaming \(item.name)..."
+        addLog("Rename remote: \(item.fullPath) -> \(destination)")
+
+        worker.async { [host, source = item.fullPath, destination] in
+            let result = RemoteTransferCommand.renamePath(host: host, from: source, to: destination)
+            DispatchQueue.main.async {
+                switch result {
+                case .failure(let error):
+                    self.statusMessage = error.message
+                    self.addLog("Rename failed: \(error.message)")
+                case .success:
+                    self.statusMessage = "Rename completed"
+                    self.addLog("Renamed remote: \(source) -> \(destination)")
+                    self.refresh()
+                }
+            }
+        }
+    }
+
+    func deleteRemoteItem(_ item: RemoteFileItem) {
+        guard let host = activeHost else {
+            statusMessage = "Select a host"
+            return
+        }
+
+        statusMessage = "Deleting \(item.name)..."
+        addLog("Delete remote: \(item.fullPath)")
+
+        worker.async { [host, item] in
+            let result = RemoteTransferCommand.deletePath(host: host, remotePath: item.fullPath, isDirectory: item.isDirectory)
+            DispatchQueue.main.async {
+                switch result {
+                case .failure(let error):
+                    self.statusMessage = error.message
+                    self.addLog("Delete failed: \(error.message)")
+                case .success:
+                    self.statusMessage = "Delete completed"
+                    self.addLog("Deleted remote: \(item.fullPath)")
                     self.refresh()
                 }
             }
@@ -1141,6 +1333,42 @@ struct FileTransferPane: View {
     @ObservedObject var service: RemoteFileService
     let hosts: [HostEntry]
     @Binding var selectedHostID: UUID?
+    @State private var localPath: String = NSHomeDirectory()
+    @State private var localEntries: [LocalFileItem] = []
+    @State private var selectedLocalEntryID: String?
+    @State private var localStatusMessage: String = ""
+    @State private var activePanel: CommanderPanel = .local
+    @State private var previewTitle: String = ""
+    @State private var previewText: String = ""
+    @State private var isPreviewPresented: Bool = false
+    @State private var isRenamePresented: Bool = false
+    @State private var renameDraft: String = ""
+    @State private var isNewFolderPresented: Bool = false
+    @State private var newFolderDraft: String = ""
+    @State private var deleteTarget: DeleteTarget?
+
+    private enum CommanderPanel {
+        case local
+        case remote
+    }
+
+    private struct LocalFileItem: Identifiable, Hashable {
+        var id: String { fullPath }
+        let name: String
+        let fullPath: String
+        let isDirectory: Bool
+        let sizeText: String
+        let modifiedText: String
+    }
+
+    private struct DeleteTarget: Identifiable {
+        let id = UUID()
+        let panel: CommanderPanel
+        let name: String
+        let remoteItem: RemoteFileItem?
+        let localPath: String?
+        let isDirectory: Bool
+    }
 
     private var selectedHost: HostEntry? {
         if let selectedHostID {
@@ -1149,77 +1377,104 @@ struct FileTransferPane: View {
         return hosts.first
     }
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            HStack {
-                Text("Files")
-                    .font(.title2.weight(.semibold))
-                Spacer()
-                Button("Refresh") {
-                    service.refresh()
-                }
-                .keyboardShortcut("r", modifiers: [.command])
-                .buttonStyle(.bordered)
-            }
+    private var selectedLocalEntry: LocalFileItem? {
+        guard let selectedLocalEntryID else { return nil }
+        return localEntries.first(where: { $0.id == selectedLocalEntryID })
+    }
 
-            if hosts.isEmpty {
-                GroupBox {
-                    Text("No hosts available. Add a host first.")
-                        .foregroundStyle(RadixTheme.textMuted)
-                        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .center)
-                        .padding(.vertical, 24)
-                }
-            } else {
-                hostControls
-                pathControls
-                contentSplit
-                Text(service.statusMessage)
-                    .font(.footnote)
-                    .foregroundStyle(RadixTheme.textMuted)
-            }
+    private var selectedRemoteEntry: RemoteFileItem? {
+        guard let selectedID = service.selectedEntryID else { return nil }
+        return service.entries.first(where: { $0.id == selectedID })
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            commanderTopBar
+            mainPanels
+            commandBar
+            transferLog
+            statusBar
         }
-        .padding(16)
+        .controlSize(.small)
+        .padding(8)
         .background(RadixTheme.surface)
         .onAppear {
             if selectedHostID == nil {
                 selectedHostID = hosts.first?.id
-            } else {
-                service.activate(host: selectedHost)
             }
+            service.activate(host: selectedHost)
+            refreshLocal()
         }
         .onChange(of: selectedHostID) { _ in
             service.activate(host: selectedHost)
         }
         .onChange(of: service.selectedEntryID) { _ in
             service.handleSelectionChange()
+            if service.selectedEntryID != nil {
+                activePanel = .remote
+            }
         }
+        .onChange(of: selectedLocalEntryID) { _ in
+            if selectedLocalEntryID != nil {
+                activePanel = .local
+            }
+        }
+        .sheet(isPresented: $isPreviewPresented) {
+            previewSheet
+        }
+        .sheet(isPresented: $isRenamePresented) {
+            renameSheet
+        }
+        .sheet(isPresented: $isNewFolderPresented) {
+            newFolderSheet
+        }
+        .alert(item: $deleteTarget) { target in
+            Alert(
+                title: Text("Delete \(target.isDirectory ? "folder" : "file")?"),
+                message: Text(target.name),
+                primaryButton: .destructive(Text("Delete")) {
+                    applyDelete(target)
+                },
+                secondaryButton: .cancel()
+            )
+        }
+        .background(
+            FunctionKeyCaptureView { key in
+                handleFunctionKey(key)
+            }
+        )
     }
 
-    private var hostControls: some View {
-        HStack(spacing: 12) {
+    private var commanderTopBar: some View {
+        HStack(spacing: 8) {
+            Text("Commander Transfer")
+                .font(.system(size: 13, weight: .semibold))
+
+            Divider().frame(height: 14)
+
             Picker("Host", selection: $selectedHostID) {
                 ForEach(hosts) { host in
                     Text(host.displayName).tag(Optional(host.id))
                 }
             }
             .pickerStyle(.menu)
-            .frame(width: 280)
+            .frame(width: 250)
+            .disabled(hosts.isEmpty)
 
             if let selectedHost {
-                Text("Protocol: \(selectedHost.fileTransfer.protocolMode.title)")
+                Text(selectedHost.fileTransfer.protocolMode.title)
                     .font(.caption)
                     .foregroundStyle(RadixTheme.textMuted)
             }
 
-            Spacer()
+            Spacer(minLength: 6)
 
             Toggle("Auto", isOn: Binding(
                 get: { service.autoRefreshEnabled },
                 set: { service.setAutoRefresh($0) }
             ))
             .toggleStyle(.switch)
-
-            Toggle("Live Preview", isOn: Binding(
+            Toggle("Preview", isOn: Binding(
                 get: { service.livePreviewEnabled },
                 set: { service.setLivePreview($0) }
             ))
@@ -1227,89 +1482,683 @@ struct FileTransferPane: View {
         }
     }
 
-    private var pathControls: some View {
+    private var mainPanels: some View {
+        HSplitView {
+            localPanel
+            remotePanel
+        }
+        .frame(minHeight: 360)
+    }
+
+    private var localPanel: some View {
+        VStack(spacing: 0) {
+            panelHeader(title: "LOCAL", subtitle: localPath)
+            panelPathBar(
+                path: $localPath,
+                onUp: goLocalUp,
+                onOpen: refreshLocal
+            )
+            listHeader
+            List(localEntries, selection: $selectedLocalEntryID) { item in
+                fileRow(
+                    icon: item.isDirectory ? "folder" : "doc",
+                    name: item.name,
+                    sizeText: item.sizeText,
+                    modifiedText: item.modifiedText
+                )
+                .tag(item.id)
+                .onTapGesture {
+                    activePanel = .local
+                }
+                .onTapGesture(count: 2) {
+                    openLocal(item)
+                }
+            }
+            .listStyle(.plain)
+            .environment(\.defaultMinListRowHeight, 18)
+            panelFooter(text: "\(localEntries.count) items")
+        }
+        .overlay(Rectangle().stroke(activePanel == .local ? RadixTheme.accent : RadixTheme.border, lineWidth: 1))
+    }
+
+    private var remotePanel: some View {
+        VStack(spacing: 0) {
+            panelHeader(title: "REMOTE", subtitle: service.remotePath)
+            panelPathBar(
+                path: $service.remotePath,
+                onUp: service.goUp,
+                onOpen: service.refresh
+            )
+            listHeader
+            List(service.entries, selection: $service.selectedEntryID) { item in
+                fileRow(
+                    icon: item.isDirectory ? "folder.fill" : "doc.text",
+                    name: item.name,
+                    sizeText: item.sizeText,
+                    modifiedText: item.modifiedText
+                )
+                .tag(item.id)
+                .onTapGesture {
+                    activePanel = .remote
+                }
+                .onTapGesture(count: 2) {
+                    service.open(item: item)
+                }
+            }
+            .listStyle(.plain)
+            .environment(\.defaultMinListRowHeight, 18)
+            panelFooter(text: "\(service.entries.count) items")
+        }
+        .overlay(Rectangle().stroke(activePanel == .remote ? RadixTheme.accent : RadixTheme.border, lineWidth: 1))
+    }
+
+    private func panelHeader(title: String, subtitle: String) -> some View {
         HStack(spacing: 8) {
+            Text(title)
+                .font(.system(size: 11, weight: .bold, design: .monospaced))
+            Text(subtitle)
+                .font(.caption2)
+                .foregroundStyle(RadixTheme.textMuted)
+                .lineLimit(1)
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 4)
+        .background(.bar)
+    }
+
+    private func panelPathBar(path: Binding<String>, onUp: @escaping () -> Void, onOpen: @escaping () -> Void) -> some View {
+        HStack(spacing: 6) {
             Button {
-                service.goUp()
+                onUp()
             } label: {
                 Image(systemName: "arrow.up.to.line")
             }
             .buttonStyle(.borderless)
 
-            TextField("Remote path", text: $service.remotePath)
+            TextField("", text: path)
                 .textFieldStyle(.roundedBorder)
-                .onSubmit {
-                    service.refresh()
-                }
+                .onSubmit(onOpen)
 
-            Button("Open") {
-                service.openSelection()
+            Button("Open", action: onOpen)
+                .buttonStyle(.bordered)
+        }
+        .padding(.horizontal, 6)
+        .padding(.vertical, 4)
+    }
+
+    private var listHeader: some View {
+        HStack(spacing: 6) {
+            Text("Name")
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text("Size")
+                .frame(width: 84, alignment: .trailing)
+            Text("Modified")
+                .frame(width: 132, alignment: .leading)
+        }
+        .font(.system(size: 11, weight: .semibold, design: .monospaced))
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(RadixTheme.surfaceSubtle)
+    }
+
+    private func fileRow(icon: String, name: String, sizeText: String, modifiedText: String) -> some View {
+        HStack(spacing: 6) {
+            Image(systemName: icon)
+                .frame(width: 14)
+                .foregroundStyle(.secondary)
+            Text(name)
+                .lineLimit(1)
+                .frame(maxWidth: .infinity, alignment: .leading)
+            Text(sizeText)
+                .font(.caption2)
+                .foregroundStyle(RadixTheme.textMuted)
+                .frame(width: 84, alignment: .trailing)
+            Text(modifiedText)
+                .font(.caption2)
+                .foregroundStyle(RadixTheme.textMuted)
+                .frame(width: 132, alignment: .leading)
+        }
+        .contentShape(Rectangle())
+    }
+
+    private func panelFooter(text: String) -> some View {
+        HStack {
+            Text(text)
+                .font(.caption2)
+                .foregroundStyle(RadixTheme.textMuted)
+            Spacer()
+        }
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(.bar)
+    }
+
+    private var commandBar: some View {
+        HStack(spacing: 8) {
+            Button("F3 View") {
+                viewSelected()
             }
             .buttonStyle(.bordered)
 
-            Button("Upload") {
-                service.uploadFromPicker()
+            Button("F4 Edit") {
+                editSelected()
+            }
+            .buttonStyle(.bordered)
+
+            Button("F5 Copy") {
+                copyBetweenPanels()
             }
             .buttonStyle(.borderedProminent)
 
-            Button("Download") {
-                service.downloadSelectionToPicker()
+            Button("F6 Rename") {
+                presentRename()
             }
-            .disabled(service.selectedEntryID == nil)
             .buttonStyle(.bordered)
+
+            Button("F7 MkDir") {
+                presentNewFolder()
+            }
+            .buttonStyle(.bordered)
+
+            Button("F8 Delete") {
+                presentDelete()
+            }
+            .buttonStyle(.bordered)
+
+            Button("Refresh") {
+                refreshLocal()
+                service.refresh()
+            }
+            .keyboardShortcut("r", modifiers: [.command])
+            .buttonStyle(.bordered)
+
+            Spacer()
+
+            if service.isBusy {
+                ProgressView().scaleEffect(0.7)
+            }
         }
     }
 
-    private var contentSplit: some View {
-        HSplitView {
-            List(service.entries, selection: $service.selectedEntryID) { item in
-                HStack(spacing: 8) {
-                    Image(systemName: item.isDirectory ? "folder" : "doc.text")
-                        .foregroundStyle(item.isDirectory ? .secondary : .primary)
-                        .frame(width: 16)
-                    Text(item.name)
-                        .lineLimit(1)
-                    Spacer()
-                    Text(item.sizeText)
-                        .font(.caption)
-                        .foregroundStyle(RadixTheme.textMuted)
-                        .frame(width: 70, alignment: .trailing)
+    private var previewSheet: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text(previewTitle)
+                .font(.headline)
+            ScrollView {
+                Text(previewText.ifEmpty("No preview"))
+                    .font(.system(.body, design: .monospaced))
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .textSelection(.enabled)
+            }
+            HStack {
+                Spacer()
+                Button("Close") {
+                    isPreviewPresented = false
                 }
-                .contentShape(Rectangle())
-                .tag(item.id)
-                .onTapGesture(count: 2) {
-                    service.open(item: item)
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .frame(minWidth: 680, minHeight: 420)
+    }
+
+    private var renameSheet: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Rename")
+                .font(.headline)
+            TextField("New name", text: $renameDraft)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    isRenamePresented = false
+                }
+                Button("Apply") {
+                    applyRename()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .frame(width: 420)
+    }
+
+    private var newFolderSheet: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("New Folder")
+                .font(.headline)
+            TextField("Folder name", text: $newFolderDraft)
+                .textFieldStyle(.roundedBorder)
+            HStack {
+                Spacer()
+                Button("Cancel") {
+                    isNewFolderPresented = false
+                }
+                Button("Create") {
+                    applyNewFolder()
+                }
+                .keyboardShortcut(.defaultAction)
+            }
+        }
+        .padding(12)
+        .frame(width: 420)
+    }
+
+    private var transferLog: some View {
+        let recentLogs = Array(service.logs.suffix(8))
+        return ScrollView {
+            VStack(alignment: .leading, spacing: 2) {
+                ForEach(recentLogs.indices, id: \.self) { idx in
+                    let log = recentLogs[idx]
+                    Text(log)
+                        .font(.system(size: 10, weight: .regular, design: .monospaced))
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
             }
-            .frame(minWidth: 360, minHeight: 420)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
+        }
+        .frame(minHeight: 60, maxHeight: 82)
+        .overlay(Rectangle().stroke(RadixTheme.border, lineWidth: 1))
+    }
 
-            VStack(alignment: .leading, spacing: 12) {
-                GroupBox("Preview") {
-                    ScrollView {
-                        Text(service.previewText.ifEmpty("Select a file to preview"))
-                            .font(.system(.body, design: .monospaced))
-                            .frame(maxWidth: .infinity, alignment: .leading)
-                            .textSelection(.enabled)
-                            .padding(8)
-                    }
-                    .frame(minHeight: 260)
+    private var statusBar: some View {
+        HStack(spacing: 12) {
+            Text(service.statusMessage)
+                .font(.caption2)
+                .foregroundStyle(RadixTheme.textMuted)
+                .lineLimit(1)
+            if !localStatusMessage.isEmpty {
+                Text(localStatusMessage)
+                    .font(.caption2)
+                    .foregroundStyle(RadixTheme.textMuted)
+                    .lineLimit(1)
+            }
+            Spacer()
+        }
+    }
+
+    private func refreshLocal() {
+        let normalized = normalizeLocalPath(localPath)
+        localPath = normalized
+        let url = URL(fileURLWithPath: normalized)
+
+        do {
+            let keys: [URLResourceKey] = [.isDirectoryKey, .fileSizeKey, .contentModificationDateKey]
+            let urls = try FileManager.default.contentsOfDirectory(
+                at: url,
+                includingPropertiesForKeys: keys,
+                options: [.skipsHiddenFiles]
+            )
+
+            let mapped = urls.compactMap { itemURL -> LocalFileItem? in
+                let values = try? itemURL.resourceValues(forKeys: Set(keys))
+                let isDirectory = values?.isDirectory ?? false
+                let size = values?.fileSize ?? 0
+                let modified = values?.contentModificationDate
+                return LocalFileItem(
+                    name: itemURL.lastPathComponent,
+                    fullPath: itemURL.path,
+                    isDirectory: isDirectory,
+                    sizeText: isDirectory ? "<DIR>" : ByteCountFormatter.string(fromByteCount: Int64(size), countStyle: .file),
+                    modifiedText: modified.map(Self.localDateFormatter.string(from:)) ?? "-"
+                )
+            }
+
+            localEntries = mapped.sorted { lhs, rhs in
+                if lhs.isDirectory != rhs.isDirectory {
+                    return lhs.isDirectory && !rhs.isDirectory
                 }
+                return lhs.name.localizedCaseInsensitiveCompare(rhs.name) == .orderedAscending
+            }
+            if let selected = selectedLocalEntryID, !localEntries.contains(where: { $0.id == selected }) {
+                selectedLocalEntryID = nil
+            }
+            localStatusMessage = "\(localEntries.count) item(s) in \(normalized)"
+        } catch {
+            localEntries = []
+            selectedLocalEntryID = nil
+            localStatusMessage = "Local list error: \(error.localizedDescription)"
+        }
+    }
 
-                GroupBox("Transfer Log") {
-                    ScrollView {
-                        VStack(alignment: .leading, spacing: 4) {
-                            ForEach(service.logs.indices, id: \.self) { idx in
-                                Text(service.logs[idx])
-                                    .font(.system(.caption, design: .monospaced))
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                            }
-                        }
-                        .padding(8)
+    private func normalizeLocalPath(_ value: String) -> String {
+        let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return NSHomeDirectory()
+        }
+        return NSString(string: trimmed).expandingTildeInPath
+    }
+
+    private func goLocalUp() {
+        let current = URL(fileURLWithPath: normalizeLocalPath(localPath))
+        let parent = current.deletingLastPathComponent()
+        localPath = parent.path
+        refreshLocal()
+    }
+
+    private func openLocal(_ item: LocalFileItem) {
+        guard item.isDirectory else {
+            selectedLocalEntryID = item.id
+            return
+        }
+        localPath = item.fullPath
+        selectedLocalEntryID = nil
+        refreshLocal()
+    }
+
+    private func uploadSelectedLocal() {
+        guard let selected = selectedLocalEntry, !selected.isDirectory else { return }
+        service.upload(localURL: URL(fileURLWithPath: selected.fullPath))
+    }
+
+    private func downloadSelectedRemote() {
+        guard let selected = selectedRemoteEntry, !selected.isDirectory else { return }
+        let localDir = URL(fileURLWithPath: normalizeLocalPath(localPath))
+        let destination = uniqueLocalDestination(in: localDir, preferredName: selected.name)
+        service.download(remoteFile: selected, localURL: destination)
+    }
+
+    private func handleFunctionKey(_ key: FunctionKeyCaptureView.Key) -> Bool {
+        switch key {
+        case .f3:
+            viewSelected()
+        case .f4:
+            editSelected()
+        case .f5:
+            copyBetweenPanels()
+        case .f6:
+            presentRename()
+        case .f7:
+            presentNewFolder()
+        case .f8:
+            presentDelete()
+        }
+        return true
+    }
+
+    private func viewSelected() {
+        switch activePanel {
+        case .local:
+            guard let entry = selectedLocalEntry, !entry.isDirectory else { return }
+            previewLocalFile(path: entry.fullPath, title: entry.name)
+        case .remote:
+            guard let entry = selectedRemoteEntry, let host = selectedHost else { return }
+            if entry.isDirectory {
+                service.open(item: entry)
+                return
+            }
+            previewTitle = entry.name
+            previewText = "Loading..."
+            isPreviewPresented = true
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = RemoteTransferCommand.previewFile(host: host, remotePath: entry.fullPath)
+                DispatchQueue.main.async {
+                    switch result {
+                    case .failure(let error):
+                        previewText = "Preview error: \(error.message)"
+                    case .success(let content):
+                        previewText = content.ifEmpty("No preview")
                     }
-                    .frame(minHeight: 150)
                 }
             }
-            .frame(minWidth: 420)
+        }
+    }
+
+    private func editSelected() {
+        switch activePanel {
+        case .local:
+            guard let entry = selectedLocalEntry, !entry.isDirectory else { return }
+            NSWorkspace.shared.open(URL(fileURLWithPath: entry.fullPath))
+        case .remote:
+            guard let entry = selectedRemoteEntry, !entry.isDirectory, let host = selectedHost else { return }
+            let tempURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(UUID().uuidString)
+                .appendingPathExtension((entry.name as NSString).pathExtension)
+            service.statusMessage = "Downloading \(entry.name) for edit..."
+            DispatchQueue.global(qos: .userInitiated).async {
+                let result = RemoteTransferCommand.downloadFile(host: host, remotePath: entry.fullPath, localPath: tempURL.path)
+                DispatchQueue.main.async {
+                    switch result {
+                    case .failure(let error):
+                        service.statusMessage = error.message
+                    case .success:
+                        NSWorkspace.shared.open(tempURL)
+                        service.statusMessage = "Opened \(entry.name)"
+                    }
+                }
+            }
+        }
+    }
+
+    private func copyBetweenPanels() {
+        switch activePanel {
+        case .local:
+            uploadSelectedLocal()
+        case .remote:
+            downloadSelectedRemote()
+        }
+    }
+
+    private func presentRename() {
+        switch activePanel {
+        case .local:
+            guard let entry = selectedLocalEntry else { return }
+            renameDraft = entry.name
+        case .remote:
+            guard let entry = selectedRemoteEntry else { return }
+            renameDraft = entry.name
+        }
+        isRenamePresented = true
+    }
+
+    private func applyRename() {
+        let trimmed = renameDraft.trimmed
+        guard !trimmed.isEmpty else { return }
+        switch activePanel {
+        case .local:
+            guard let entry = selectedLocalEntry else { return }
+            let source = URL(fileURLWithPath: entry.fullPath)
+            let destination = source.deletingLastPathComponent().appendingPathComponent(trimmed)
+            guard !FileManager.default.fileExists(atPath: destination.path) else {
+                localStatusMessage = "Rename error: destination already exists"
+                return
+            }
+            do {
+                try FileManager.default.moveItem(at: source, to: destination)
+                localStatusMessage = "Renamed \(entry.name) -> \(trimmed)"
+                refreshLocal()
+            } catch {
+                localStatusMessage = "Rename error: \(error.localizedDescription)"
+            }
+        case .remote:
+            guard let entry = selectedRemoteEntry else { return }
+            service.renameRemoteItem(entry, to: trimmed)
+        }
+        isRenamePresented = false
+    }
+
+    private func presentNewFolder() {
+        newFolderDraft = ""
+        isNewFolderPresented = true
+    }
+
+    private func applyNewFolder() {
+        let trimmed = newFolderDraft.trimmed
+        guard !trimmed.isEmpty else { return }
+        switch activePanel {
+        case .local:
+            let destination = URL(fileURLWithPath: normalizeLocalPath(localPath)).appendingPathComponent(trimmed)
+            do {
+                try FileManager.default.createDirectory(at: destination, withIntermediateDirectories: true)
+                localStatusMessage = "Created folder \(trimmed)"
+                refreshLocal()
+            } catch {
+                localStatusMessage = "Create folder error: \(error.localizedDescription)"
+            }
+        case .remote:
+            service.createRemoteDirectory(named: trimmed)
+        }
+        isNewFolderPresented = false
+    }
+
+    private func presentDelete() {
+        switch activePanel {
+        case .local:
+            guard let entry = selectedLocalEntry else { return }
+            deleteTarget = DeleteTarget(
+                panel: .local,
+                name: entry.name,
+                remoteItem: nil,
+                localPath: entry.fullPath,
+                isDirectory: entry.isDirectory
+            )
+        case .remote:
+            guard let entry = selectedRemoteEntry else { return }
+            deleteTarget = DeleteTarget(
+                panel: .remote,
+                name: entry.name,
+                remoteItem: entry,
+                localPath: nil,
+                isDirectory: entry.isDirectory
+            )
+        }
+    }
+
+    private func applyDelete(_ target: DeleteTarget) {
+        switch target.panel {
+        case .local:
+            guard let path = target.localPath else { return }
+            do {
+                var trashedURL: NSURL?
+                try FileManager.default.trashItem(at: URL(fileURLWithPath: path), resultingItemURL: &trashedURL)
+                localStatusMessage = "Deleted \(target.name)"
+                refreshLocal()
+            } catch {
+                localStatusMessage = "Delete error: \(error.localizedDescription)"
+            }
+        case .remote:
+            guard let item = target.remoteItem else { return }
+            service.deleteRemoteItem(item)
+        }
+    }
+
+    private func previewLocalFile(path: String, title: String) {
+        let url = URL(fileURLWithPath: path)
+        do {
+            let data = try Data(contentsOf: url, options: [.mappedIfSafe])
+            let clipped = data.prefix(65_536)
+            if let text = String(data: clipped, encoding: .utf8) ?? String(data: clipped, encoding: .ascii) {
+                previewTitle = title
+                previewText = text
+                isPreviewPresented = true
+            } else {
+                previewTitle = title
+                previewText = "Binary file preview is not available."
+                isPreviewPresented = true
+            }
+        } catch {
+            localStatusMessage = "Preview error: \(error.localizedDescription)"
+        }
+    }
+
+    private func uniqueLocalDestination(in directory: URL, preferredName: String) -> URL {
+        let baseName = (preferredName as NSString).deletingPathExtension
+        let ext = (preferredName as NSString).pathExtension
+        var candidate = directory.appendingPathComponent(preferredName)
+        guard FileManager.default.fileExists(atPath: candidate.path) else { return candidate }
+
+        var index = 1
+        while index < 10_000 {
+            let suffix = " copy \(index)"
+            let name = ext.isEmpty ? "\(baseName)\(suffix)" : "\(baseName)\(suffix).\(ext)"
+            candidate = directory.appendingPathComponent(name)
+            if !FileManager.default.fileExists(atPath: candidate.path) {
+                return candidate
+            }
+            index += 1
+        }
+
+        return directory.appendingPathComponent(UUID().uuidString + (ext.isEmpty ? "" : ".\(ext)"))
+    }
+
+    private static let localDateFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd HH:mm"
+        return formatter
+    }()
+}
+
+struct FunctionKeyCaptureView: NSViewRepresentable {
+    enum Key {
+        case f3
+        case f4
+        case f5
+        case f6
+        case f7
+        case f8
+    }
+
+    let onKey: (Key) -> Bool
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(onKey: onKey)
+    }
+
+    func makeNSView(context: Context) -> NSView {
+        let view = NSView(frame: .zero)
+        context.coordinator.install()
+        return view
+    }
+
+    func updateNSView(_ nsView: NSView, context: Context) {
+        context.coordinator.onKey = onKey
+    }
+
+    static func dismantleNSView(_ nsView: NSView, coordinator: Coordinator) {
+        coordinator.uninstall()
+    }
+
+    final class Coordinator {
+        var onKey: (Key) -> Bool
+        private var monitor: Any?
+
+        init(onKey: @escaping (Key) -> Bool) {
+            self.onKey = onKey
+        }
+
+        func install() {
+            guard monitor == nil else { return }
+            monitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) { [weak self] event in
+                guard let self else { return event }
+                guard event.modifierFlags.intersection([.command, .option, .control]).isEmpty else {
+                    return event
+                }
+                guard let key = Self.mapFunctionKey(event.keyCode) else { return event }
+                let handled = self.onKey(key)
+                return handled ? nil : event
+            }
+        }
+
+        func uninstall() {
+            if let monitor {
+                NSEvent.removeMonitor(monitor)
+            }
+            monitor = nil
+        }
+
+        private static func mapFunctionKey(_ keyCode: UInt16) -> Key? {
+            switch keyCode {
+            case 99: return .f3
+            case 118: return .f4
+            case 96: return .f5
+            case 97: return .f6
+            case 98: return .f7
+            case 100: return .f8
+            default: return nil
+            }
         }
     }
 }

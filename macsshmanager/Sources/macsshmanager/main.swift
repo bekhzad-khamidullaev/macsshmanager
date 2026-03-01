@@ -374,6 +374,7 @@ enum SystemMenuAction {
     case viewFiles
     case viewSettings
     case toggleSidebar
+    case toggleConsoleFiles
     case connectSelected
     case openFiles
     case previousHost
@@ -553,6 +554,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
     case viewTTY
     case viewFiles
     case viewSettings
+    case toggleConsoleFiles
     case connectSelected
     case openFiles
     case previousHost
@@ -576,6 +578,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .viewTTY: return "View TTY"
         case .viewFiles: return "View Files"
         case .viewSettings: return "View Settings"
+        case .toggleConsoleFiles: return "Toggle Console/Files"
         case .connectSelected: return "Connect Selected"
         case .openFiles: return "Open Files"
         case .previousHost: return "Previous Host"
@@ -592,7 +595,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         switch self {
         case .newHost, .newGroup, .importConfig, .exportConfig, .openSettings:
             return "File"
-        case .toggleSidebar, .viewTTY, .viewFiles, .viewSettings:
+        case .toggleSidebar, .viewTTY, .viewFiles, .viewSettings, .toggleConsoleFiles:
             return "View"
         case .connectSelected, .openFiles, .previousHost, .nextHost, .deleteSelection:
             return "Navigate"
@@ -608,18 +611,19 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .importConfig: return ShortcutBinding(keyToken: "i", command: true, shift: true)
         case .exportConfig: return ShortcutBinding(keyToken: "e", command: true, shift: true)
         case .openSettings: return ShortcutBinding(keyToken: "comma", command: true)
-        case .toggleSidebar: return ShortcutBinding(keyToken: "s", command: true, option: true)
+        case .toggleSidebar: return ShortcutBinding(keyToken: "b", command: true)
         case .viewTTY: return ShortcutBinding(keyToken: "1", command: true)
         case .viewFiles: return ShortcutBinding(keyToken: "2", command: true)
         case .viewSettings: return ShortcutBinding(keyToken: "3", command: true)
+        case .toggleConsoleFiles: return ShortcutBinding(keyToken: "j", command: true)
         case .connectSelected: return ShortcutBinding(keyToken: "return", command: true)
-        case .openFiles: return ShortcutBinding(keyToken: "f", command: true, option: true)
+        case .openFiles: return ShortcutBinding(keyToken: "f", command: true, shift: true)
         case .previousHost: return ShortcutBinding(keyToken: "upArrow", command: true, option: true)
         case .nextHost: return ShortcutBinding(keyToken: "downArrow", command: true, option: true)
         case .deleteSelection: return ShortcutBinding(keyToken: "delete")
         case .saveSettings: return ShortcutBinding(keyToken: "s", command: true)
         case .closeAllSessions: return ShortcutBinding(keyToken: "w", command: true, shift: true)
-        case .refreshFiles: return ShortcutBinding(keyToken: "r", command: true, option: true)
+        case .refreshFiles: return ShortcutBinding(keyToken: "r", command: true)
         case .manageShortcuts: return ShortcutBinding(keyToken: "slash", command: true)
         }
     }
@@ -635,6 +639,7 @@ enum ShortcutAction: String, CaseIterable, Identifiable {
         case .viewTTY: return .viewTTY
         case .viewFiles: return .viewFiles
         case .viewSettings: return .viewSettings
+        case .toggleConsoleFiles: return .toggleConsoleFiles
         case .connectSelected: return .connectSelected
         case .openFiles: return .openFiles
         case .previousHost: return .previousHost
@@ -1987,7 +1992,7 @@ struct HostEditorPane: View {
     let canConnect: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             Text(mode.title)
                 .font(.title3.weight(.semibold))
 
@@ -2010,7 +2015,7 @@ struct HostEditorPane: View {
                     .foregroundStyle(.secondary)
             }
 
-            HStack(spacing: 10) {
+            HStack(spacing: 8) {
                 Button(mode.saveTitle, action: onSave)
                     .keyboardShortcut("s", modifiers: [.command])
                     .buttonStyle(.borderedProminent)
@@ -2021,7 +2026,7 @@ struct HostEditorPane: View {
                 }
             }
         }
-        .padding(16)
+        .padding(10)
         .background(RadixTheme.surface)
         .onAppear {
             if host.connectionProtocol == .ssh, host.authMethod == .password, host.terminalLaunchMode == .systemTerminal {
@@ -2049,7 +2054,7 @@ struct HostEditorPane: View {
     }
 
     private var basicEditorGrid: some View {
-        Grid(alignment: .leading, horizontalSpacing: 10, verticalSpacing: 8) {
+        Grid(alignment: .leading, horizontalSpacing: 8, verticalSpacing: 6) {
             if mode == .host {
                 GridRow {
                     label("Name")
@@ -2167,7 +2172,7 @@ struct HostEditorPane: View {
     }
 
     private var advancedSettingsTabs: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: 6) {
             HStack {
                 Text("Advanced Host Settings")
                     .font(.subheadline.weight(.semibold))
@@ -2185,14 +2190,14 @@ struct HostEditorPane: View {
             }
 
             selectedSettingsContent
-                .frame(minHeight: 360)
-                .padding(14)
+                .frame(minHeight: 300)
+                .padding(8)
                 .background(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .fill(RadixTheme.surfaceSubtle)
                 )
                 .overlay(
-                    RoundedRectangle(cornerRadius: 10, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .stroke(RadixTheme.border, lineWidth: 1)
                 )
                 .controlSize(.small)
@@ -2223,7 +2228,7 @@ struct HostEditorPane: View {
 
     private var terminalTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 row("TERM") {
                     TextField("xterm-256color", text: $host.sshSettings.terminalType)
                         .textFieldStyle(.roundedBorder)
@@ -2297,7 +2302,7 @@ struct HostEditorPane: View {
 
     private var connectionTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 row("TTY mode") {
                     Picker("", selection: $host.sshSettings.requestTTY) {
                         ForEach(RequestTTYMode.allCases) { mode in
@@ -2381,7 +2386,7 @@ struct HostEditorPane: View {
 
     private var authTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 row("Public key auth") {
                     Toggle("", isOn: $host.sshSettings.enablePublicKeyAuth)
                         .labelsHidden()
@@ -2427,7 +2432,7 @@ struct HostEditorPane: View {
 
     private var sshTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 row("KEX algorithms") {
                     TextField("curve25519-sha256,...", text: $host.sshSettings.kexAlgorithms)
                         .textFieldStyle(.roundedBorder)
@@ -2463,7 +2468,7 @@ struct HostEditorPane: View {
 
     private var tunnelsTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 multiline(title: "Local (-L)", text: $host.sshSettings.localPortForwards, hint: "One per line, e.g. 127.0.0.1:8080:10.0.0.12:80")
                 multiline(title: "Remote (-R)", text: $host.sshSettings.remotePortForwards, hint: "One per line, e.g. 9090:127.0.0.1:9090")
                 multiline(title: "Dynamic (-D)", text: $host.sshSettings.dynamicPortForwards, hint: "One per line, e.g. 1080 or 127.0.0.1:1080")
@@ -2474,7 +2479,7 @@ struct HostEditorPane: View {
 
     private var proxyTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 row("Proxy type") {
                     Picker("", selection: $host.sshSettings.proxyType) {
                         ForEach(ProxyType.allCases) { mode in
@@ -2516,7 +2521,7 @@ struct HostEditorPane: View {
 
     private var environmentTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 8) {
                 multiline(title: "SendEnv", text: $host.sshSettings.sendEnvPatterns, hint: "One pattern per line, e.g. LANG LC_*")
                 multiline(title: "SetEnv", text: $host.sshSettings.setEnvironment, hint: "One KEY=VALUE per line")
             }
@@ -2526,7 +2531,7 @@ struct HostEditorPane: View {
 
     private var loggingTab: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 10) {
+            VStack(alignment: .leading, spacing: 8) {
                 row("Enable logging") {
                     Toggle("", isOn: $host.sshSettings.loggingEnabled)
                         .labelsHidden()
@@ -2557,7 +2562,7 @@ struct HostEditorPane: View {
     }
 
     private func row<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
-        HStack(alignment: .center, spacing: 12) {
+        HStack(alignment: .center, spacing: 8) {
             Text(title)
                 .font(.caption.weight(.medium))
                 .foregroundStyle(RadixTheme.textMuted)
@@ -2567,18 +2572,18 @@ struct HostEditorPane: View {
     }
 
     private func multiline(title: String, text: Binding<String>, hint: String) -> some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 4) {
             Text(title)
                 .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .leading)
             TextEditor(text: text)
                 .font(.system(.body, design: .monospaced))
-                .frame(minHeight: 90)
-                .padding(6)
+                .frame(minHeight: 72)
+                .padding(4)
                 .background(Color(nsColor: .textBackgroundColor))
-                .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .clipShape(RoundedRectangle(cornerRadius: 6, style: .continuous))
                 .overlay(
-                    RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    RoundedRectangle(cornerRadius: 6, style: .continuous)
                         .stroke(RadixTheme.border, lineWidth: 1)
                 )
             Text(hint)
@@ -2595,9 +2600,9 @@ struct SessionTerminalView: View {
         TerminalContainerView(terminalView: runtime.terminalView)
             .frame(maxWidth: .infinity, maxHeight: .infinity)
             .background(Color(nsColor: runtime.terminalView.nativeBackgroundColor))
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+            .clipShape(RoundedRectangle(cornerRadius: 4, style: .continuous))
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .stroke(RadixTheme.border, lineWidth: 1)
         )
         .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -2632,8 +2637,8 @@ struct SessionTileView: View {
                     .font(.caption2.weight(.semibold))
                     .foregroundStyle(runtime.isRunning ? .green : .secondary)
             }
-            .padding(.horizontal, 8)
-            .padding(.vertical, 6)
+            .padding(.horizontal, 6)
+            .padding(.vertical, 4)
             .background(.bar)
             .overlay(
                 Rectangle()
@@ -2643,14 +2648,14 @@ struct SessionTileView: View {
             )
 
             TerminalContainerView(terminalView: runtime.terminalView)
-                .frame(minHeight: 220, maxHeight: .infinity)
+                .frame(minHeight: 180, maxHeight: .infinity)
                 .background(Color(nsColor: runtime.terminalView.nativeBackgroundColor))
         }
         .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .stroke(RadixTheme.border, lineWidth: 1)
         )
-        .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
+        .clipShape(RoundedRectangle(cornerRadius: 5, style: .continuous))
     }
 }
 
@@ -2678,17 +2683,17 @@ struct SessionsPane: View {
                         ScrollView {
                             LazyVGrid(
                                 columns: Array(
-                                    repeating: GridItem(.flexible(minimum: CGFloat(sessions.gridMinTileWidth)), spacing: 8),
+                                    repeating: GridItem(.flexible(minimum: CGFloat(sessions.gridMinTileWidth)), spacing: 6),
                                     count: max(1, min(6, sessions.gridColumns))
                                 ),
-                                spacing: 8
+                                spacing: 6
                             ) {
                                 ForEach(sessions.tabs) { tab in
                                     SessionTileView(tab: tab)
                                         .frame(minHeight: CGFloat(sessions.gridTileHeight))
                                 }
                             }
-                            .padding(8)
+                            .padding(4)
                         }
                     }
                 }
@@ -2705,12 +2710,12 @@ struct SessionsPane: View {
                         tabHeader(tab)
                     }
                 }
-                .padding(.horizontal, 6)
-                .padding(.top, 4)
+                .padding(.horizontal, 4)
+                .padding(.top, 2)
             }
             Spacer()
         }
-        .frame(height: 42)
+        .frame(height: 34)
         .background(.bar)
         .overlay(
             Rectangle()
@@ -2746,14 +2751,14 @@ struct SessionsPane: View {
             .foregroundStyle(.secondary)
         }
         .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .frame(minWidth: 128, alignment: .leading)
+        .padding(.vertical, 4)
+        .frame(minWidth: 96, alignment: .leading)
         .background(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .fill(selected ? RadixTheme.surfaceElevated : Color.clear)
         )
         .overlay(
-            RoundedRectangle(cornerRadius: 7, style: .continuous)
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
                 .stroke(selected ? RadixTheme.border : Color.clear, lineWidth: 1)
         )
         .contextMenu {
@@ -2956,7 +2961,7 @@ struct ContentView: View {
                 } else {
                     HSplitView {
                         connectionsPane
-                            .frame(minWidth: 250, idealWidth: 280, maxWidth: 360)
+                            .frame(minWidth: 220, idealWidth: 250, maxWidth: 320)
                         workspacePane
                             .frame(maxWidth: .infinity, maxHeight: .infinity)
                     }
@@ -2964,7 +2969,7 @@ struct ContentView: View {
             }
         }
         .tint(RadixTheme.accent)
-        .frame(minWidth: 1380, minHeight: 860)
+        .frame(minWidth: 1160, minHeight: 720)
         .onAppear {
             if store.hosts.isEmpty, store.groups.isEmpty {
                 _ = store.addGroup(name: "Default", parentId: nil)
@@ -3003,7 +3008,7 @@ struct ContentView: View {
     }
 
     private var workspaceTopBar: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 6) {
             Button(action: { toggleSidebar() }) {
                 Image(systemName: isSidebarHidden ? "sidebar.left" : "sidebar.left")
                     .imageScale(.large)
@@ -3069,8 +3074,9 @@ struct ContentView: View {
                     .lineLimit(1)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .controlSize(.small)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 5)
         .background(.bar)
         .overlay(
             Rectangle()
@@ -3143,7 +3149,7 @@ struct ContentView: View {
                 }
             }
             .listStyle(.sidebar)
-            .environment(\.defaultMinListRowHeight, 20)
+            .environment(\.defaultMinListRowHeight, 18)
             .background(HorizontalScrollLock())
         }
         .background(RadixTheme.surface)
@@ -3162,13 +3168,13 @@ struct ContentView: View {
         }
         .padding(
             selectedPage == .sessions
-                ? EdgeInsets(top: 0, leading: 8, bottom: 8, trailing: 8)
-                : EdgeInsets(top: 10, leading: 10, bottom: 10, trailing: 10)
+                ? EdgeInsets(top: 0, leading: 4, bottom: 4, trailing: 4)
+                : EdgeInsets(top: 6, leading: 6, bottom: 6, trailing: 6)
         )
     }
 
     private var hostsPage: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 8) {
             hostsHeader
             hostsContent
 
@@ -3301,9 +3307,8 @@ struct ContentView: View {
     @ViewBuilder
     private func sidebarRowBackground(for node: SidebarNode) -> some View {
         if sidebarSelection == node.selection {
-            RoundedRectangle(cornerRadius: 6, style: .continuous)
+            RoundedRectangle(cornerRadius: 4, style: .continuous)
                 .fill(RadixTheme.accent.opacity(0.16))
-                .padding(.vertical, 1)
         } else {
             Color.clear
         }
@@ -3882,6 +3887,8 @@ struct ContentView: View {
             openSettingsFromCurrentSelection()
         case .toggleSidebar:
             toggleSidebar()
+        case .toggleConsoleFiles:
+            toggleConsoleFiles()
         case .connectSelected:
             connectSelectedHost()
         case .openFiles:
@@ -4283,6 +4290,15 @@ struct ContentView: View {
         applySessionOpenResult(result, host: host)
         sidebarSelection = .host(host.id)
     }
+
+    private func toggleConsoleFiles() {
+        switch selectedPage {
+        case .sessions:
+            selectedPage = .files
+        case .files, .hosts:
+            selectedPage = .sessions
+        }
+    }
 }
 
 struct macsshmanagerCommands: Commands {
@@ -4311,6 +4327,7 @@ struct macsshmanagerCommands: Commands {
 
         CommandMenu("View") {
             menuButton("Toggle Sidebar", shortcut: .toggleSidebar)
+            menuButton("Toggle Console/Files", shortcut: .toggleConsoleFiles)
 
             Divider()
 
